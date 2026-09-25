@@ -24,6 +24,11 @@ COPY data/slot_lexicon.json data/dependencies.json data/appliance_exclusions.jso
 # Screen Graph + catalog vectors, so /health goes green in well under a second (ADR-007).
 RUN python scripts/build_screengraph.py && python scripts/build_index.py
 
+# The kit plans the no-article path (cache/no_siis.py) loads at startup: without them a request
+# with no article gets an empty answer. Copied after the build so a new results.jsonl does not
+# rebuild the index.
+COPY results.jsonl /data/results.jsonl
+
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"

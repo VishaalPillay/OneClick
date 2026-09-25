@@ -1,10 +1,15 @@
 .git/
-.venv/
+**/.venv/
+**/venv/
+# Keys never enter the build context: COPY api/ /app/ would bake an api/.env into the image.
+**/.env
+**/.env.*
 **/__pycache__/
 **/*.pyc
 **/.pytest_cache/
 **/.ruff_cache/
-api/cache.sqlite
+# Local cache snapshots and their journals are machine state, not source.
+**/cache.sqlite*
 console/node_modules/
 console/.next/
 data/build/

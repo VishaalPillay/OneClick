@@ -20,10 +20,12 @@ def new_trace() -> Trace:
 
 
 def stage(trace: Trace, name: str, started_at: float, summary: str = "") -> StageTiming:
-    """Record one stage's duration against a monotonic start time."""
+    """Record one stage's duration against a monotonic start time.
+
+    `summary` is not stored: StageTiming has no field for it and models.py is frozen. The console
+    gets each stage's summary from its SSE event instead.
+    """
     timing = StageTiming(stage=name, ms=round((time.perf_counter() - started_at) * 1000, 1))
-    if summary and hasattr(timing, "summary"):
-        timing.summary = summary
     trace.timings.append(timing)
     return timing
 

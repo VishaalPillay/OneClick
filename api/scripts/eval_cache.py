@@ -6,8 +6,10 @@ Run from api/:
     python scripts/eval_cache.py --authored   # the older hand-written set, no LLM variations
 
 Real mode warms the cache exactly as a served request would - the kit query plus the 8-10 LLM
-variations recorded in results.jsonl - then replays eval/sets/paraphrases.jsonl (expect a hit)
-and eval/sets/near_miss.jsonl (expect a miss: same component, different symptom).
+variations recorded in results.jsonl, keyed on the real article hash - then replays
+eval/sets/paraphrases.jsonl (expect a hit) and eval/sets/near_miss.jsonl (expect a miss: same
+component, different symptom or intent). The 20 kit rows share 11 articles, so a hit can serve a
+sibling row's plan, as it can live: that is the wrong-plan count.
 """
 
 import argparse
@@ -21,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import cache
 from app.config import settings
 from app.models import CacheEntry
+from app.pipeline.normalize import clean_siis, display_query, normalize_query
 from app.pipeline.slots import extract_slots
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,51 +38,58 @@ def read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def normalise(text: str) -> str:
-    """Rough stand-in for the pipeline's normalizer: enough to key the cache consistently here."""
-    return " ".join(text.split()).strip().lower()
+def kit_rows() -> dict[str, dict]:
+    return {row["id"]: row for row in json.loads(KIT.read_text(encoding="utf-8"))["responses"]}
 
 
-def warm_from_results() -> dict[str, str]:
-    """Load every solved plan from results.jsonl. Returns row_id -> cache key."""
-    kit = {row["id"]: row for row in json.loads(KIT.read_text(encoding="utf-8"))["responses"]}
-    by_query = {normalise(row["original_query"]): row_id for row_id, row in kit.items()}
+def warm_from_results(kit: dict[str, dict]) -> tuple[dict[str, str], dict[str, str]]:
+    """Load every solved plan from results.jsonl. Returns row_id -> cache key, row_id -> article hash.
+
+    Key, slots and stored text come from the engine's own normalize_query, display_query and
+    clean_siis. A rougher stand-in lost kit row 1, whose "1. " numbering results.jsonl no longer has.
+    """
+    by_query = {normalize_query(row["original_query"]): row_id for row_id, row in kit.items()}
 
     cache.clear()
     keys: dict[str, str] = {}
+    hashes: dict[str, str] = {}
     for row in read_jsonl(RESULTS):
-        query = row["query"]
-        row_id = by_query.get(normalise(query))
+        norm_query = normalize_query(row["query"])
+        row_id = by_query.get(norm_query)
         if row_id is None:  # results.jsonl query text drifted from the kit
             continue
-        siis_hash = f"hash-{row_id}"
-        key = cache.make_key(normalise(query), siis_hash)
+        _, siis_hash = clean_siis(kit[row_id]["siis_response"])
+        key = cache.make_key(norm_query, siis_hash)
         cache.put(
             CacheEntry(
                 key=key,
                 siis_hash=siis_hash,
-                slots=extract_slots(query),
+                slots=extract_slots(norm_query),
                 plan=row["response"],
-                query_texts=[query, *row.get("query_variations", [])],
+                query_texts=[display_query(row["query"]), *row.get("query_variations", [])],
                 created_at=time.time(),
             )
         )
-        keys[row_id] = key
-    return keys
+        keys[row_id], hashes[row_id] = key, siis_hash
+    return keys, hashes
 
 
 def measure_real() -> dict:
-    keys = warm_from_results()
+    kit = kit_rows()
+    keys, hashes = warm_from_results(kit)
     paraphrases = [p for p in read_jsonl(PARAPHRASES) if p["row_id"] in keys]
     near_misses = [n for n in read_jsonl(NEAR_MISS) if n["row_id"] in keys]
+
+    def lookup(text: str, row_id: str):
+        norm_query = normalize_query(text)
+        return cache.lookup(norm_query, extract_slots(norm_query), hashes[row_id])
 
     hits = wrong = 0
     elapsed = 0.0
     misses_by_row: dict[str, int] = {}
     for case in paraphrases:
-        query = normalise(case["query"])
         start = time.perf_counter()
-        hit = cache.lookup(query, extract_slots(query), f"hash-{case['row_id']}")
+        hit = lookup(case["query"], case["row_id"])
         elapsed += (time.perf_counter() - start) * 1000
         if hit is None:
             misses_by_row[case["row_id"]] = misses_by_row.get(case["row_id"], 0) + 1
@@ -87,20 +97,12 @@ def measure_real() -> dict:
         hits += 1
         wrong += hit.key != keys[case["row_id"]]
 
-    false_hits = 0
-    for case in near_misses:
-        query = normalise(case["query"])
-        hit = cache.lookup(query, extract_slots(query), f"hash-{case['row_id']}")
-        false_hits += hit is not None
+    false_hits = sum(lookup(case["query"], case["row_id"]) is not None for case in near_misses)
 
     repeat_hits, repeat_ms = 0, 0.0
-    for row in read_jsonl(RESULTS):
-        query = normalise(row["query"])
-        row_id = next((r for r, k in keys.items() if k == cache.make_key(query, f"hash-{r}")), None)
-        if row_id is None:
-            continue
+    for row_id in keys:  # the kit query verbatim, numbering and all, as the scorer sends it
         start = time.perf_counter()
-        hit = cache.lookup(query, extract_slots(query), f"hash-{row_id}")
+        hit = lookup(kit[row_id]["original_query"], row_id)
         repeat_ms += (time.perf_counter() - start) * 1000
         repeat_hits += hit is not None and hit.tier == "exact"
 
