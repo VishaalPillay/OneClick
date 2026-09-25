@@ -1222,6 +1222,20 @@ body:has(.st) {
     box-shadow: 0 0 0 7px rgba(255, 61, 154, 0.05);
   }
 }
+.win-live:has(.win-fallback) {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+.win-model {
+  white-space: nowrap;
+}
+.win-fallback {
+  flex-basis: 100%;
+  padding-left: 17px;
+  font-size: 11.5px;
+  white-space: nowrap;
+  color: var(--on-dark-faint);
+}
 .win-meta {
   font-size: 14px;
   white-space: nowrap;
@@ -2790,6 +2804,13 @@ body:has(.st) {
   font-size: 14px;
   font-weight: 500;
   color: var(--on-dark-faint);
+}
+.pf-pending b.is-measured {
+  font-family: inherit;
+  font-size: clamp(24px, 2vw, 32px);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  color: var(--lime);
 }
 
 /* ── finale ────────────────────────────────────────────────────────────── */

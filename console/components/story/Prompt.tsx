@@ -7,25 +7,22 @@ import type { PromptFile, StoryData } from "@/lib/story";
 /**
  * Inside the model: the two LLM calls, prompt on the left and response on the right.
  *
- * Call A (enrich) turns the complaint into a canonical query, an intent and twelve candidate
- * rewordings, two of which our own filter then throws away. Call B (extract) reads the article
- * as numbered sentences and must answer with actions whose every step cites sentence ids — as
- * each step streams in, the sentence it cites lights up on the left.
+ * Call A (variations) rewrites the complaint twelve ways for the semantic cache. It runs in the
+ * background next to extraction, so it never delays an answer, and our own filter throws some of
+ * the twelve away. Call B (extract, select mode) reads the article as numbered sentences and
+ * answers with the ids of the sentences that are each action's steps; the engine then uses those
+ * sentences word for word. As each action streams in, the sentences it cites light up on the left.
  *
- * The instruction text is read from api/app/llm/prompts/ at build time, so this shows exactly
- * what the engine sends. While those files are still stubs the pane says so rather than making
- * instructions up; the inputs and the return shapes below them are the real contract.
+ * The instruction text is read from api/app/llm/prompts/ at build time and the model names and
+ * temperatures from api/app/config.py, so this shows exactly what the engine sends.
  */
 
-// The shapes the two calls must return: `Intent` and `DraftAction` in api/app/models.py.
-const ENRICH_RETURN = `{
-  "canonical_query": str,
-  "intents": [{ "text", "domain", "title" }],   // 1 to 3
-  "variations": [str, ...]                      // 12 candidates
-}`;
+// The shapes the two calls must return: the schemas in api/app/pipeline/enrich.py and extract.py.
+const VARIATIONS_RETURN = `{ "variations": [str, ...] }   // 12 candidates`;
 
-const EXTRACT_RETURN = `{ "actions": [{ "name", "screen_path", "intent_verb",
-               "steps": [{ "text", "src_ids": ["S…"] }] }] }`;
+const EXTRACT_RETURN = `{ "goals": [{ "problem", "title", "topic", "domain",
+             "actions": [{ "src_ids": ["S…"], "name", "description",
+                           "screen_path", "intent_verb" }] }] }`;
 
 const REASON: Record<string, (j: number, cap: number) => string> = {
   token_jaccard_vs_original: (j) => `filtered · too close to the original (overlap ${j.toFixed(2)})`,
@@ -54,10 +51,12 @@ const p = (s: string) => <span className="t-pun">{s}</span>;
 
 export function Prompt({ data }: { data: StoryData }) {
   const root = useRef<HTMLElement>(null);
-  const { enrich, extract, article } = data;
-  const shown = extract.actions.slice(0, 3);
-  const more = extract.actions.slice(3);
-  const moreSteps = more.reduce((n, a) => n + a.steps.length, 0);
+  const { enrich, extract, article, llm } = data;
+  // Select mode: the model answers with sentence ids per action, not with step text.
+  const ids = (a: (typeof extract.actions)[number]) => [...new Set(a.steps.flatMap((s) => s.src))];
+  const shown = extract.actions.slice(0, 6);
+  const more = extract.actions.slice(6);
+  const cited = new Set(extract.actions.flatMap(ids)).size;
 
   // Sentences grouped under their section headings, in article order.
   const sections = article.sections.map((s) => ({
@@ -170,13 +169,13 @@ export function Prompt({ data }: { data: StoryData }) {
           const at = bStart + i * 0.42;
           tl.fromTo(line, { autoAlpha: 0, x: -10 }, { autoAlpha: 1, x: 0, duration: 0.4 }, at);
           tl.to($(".rb")[0], { y: follow(line), duration: 0.3 }, at);
-          const src = line.dataset.src;
-          if (src) {
-            const sent = $(`.art-s[data-id="${src}"]`)[0] as HTMLElement | undefined;
-            if (sent) {
-              tl.to(list, { y: centre(sent), duration: 0.4, ease: "power2.inOut" }, at);
-              tl.to(sent, { "--cite": 1, duration: 0.3 }, at + 0.2);
-            }
+          const sents = (line.dataset.src ?? "")
+            .split(" ")
+            .map((id) => $(`.art-s[data-id="${id}"]`)[0] as HTMLElement | undefined)
+            .filter((x): x is HTMLElement => Boolean(x));
+          if (sents.length) {
+            tl.to(list, { y: centre(sents[0]), duration: 0.4, ease: "power2.inOut" }, at);
+            tl.to(sents, { "--cite": 1, duration: 0.3, stagger: 0.05 }, at + 0.2);
           }
         });
         const bEnd = bStart + bLines.length * 0.42;
@@ -189,9 +188,10 @@ export function Prompt({ data }: { data: StoryData }) {
     { scope: root },
   );
 
-  const rail: { stage: string; label: string; ms: number; llm?: boolean; state?: string }[] = [
+  // Variations run beside the pipeline, not in it: the rail marks them "background", not a time.
+  const rail: { stage: string; label: string; ms?: number; llm?: boolean; state?: string }[] = [
     { stage: "cache", label: "cache", ms: data.cache.ms, state: "done" },
-    { stage: "enrich", label: "enrich", ms: enrich.ms, llm: true },
+    { stage: "enrich", label: "variations", llm: true },
     { stage: "segment", label: "segment", ms: data.timing.stages.find((s) => s.stage === "segment")?.ms ?? 0 },
     { stage: "extract", label: "extract", ms: extract.ms, llm: true },
     { stage: "ground", label: "ground", ms: data.timing.stages.find((s) => s.stage === "ground")?.ms ?? 0 },
@@ -211,15 +211,15 @@ export function Prompt({ data }: { data: StoryData }) {
             <div className="llm-call llm-call-a" data-on="false">
               <span className="llm-call-n">A</span>
               <span>
-                <b>Enrich</b>
-                <small>Understand the complaint</small>
+                <b>Variations</b>
+                <small>In the background, never delays the answer</small>
               </span>
             </div>
             <div className="llm-call llm-call-b" data-on="false">
               <span className="llm-call-n">B</span>
               <span>
                 <b>Extract</b>
-                <small>Pull cited steps from the article</small>
+                <small>Pick the article sentences that fix it</small>
               </span>
             </div>
           </div>
@@ -230,7 +230,7 @@ export function Prompt({ data }: { data: StoryData }) {
             <div className="win-bar">
               <span className="win-label">Prompt</span>
               <span className="win-files">
-                <span className="win-file win-file-a">{data.prompts.enrich.file}</span>
+                <span className="win-file win-file-a">{data.prompts.variations.file}</span>
                 <span className="win-file win-file-b">{data.prompts.extract.file}</span>
               </span>
               <span className="win-meta">
@@ -239,14 +239,14 @@ export function Prompt({ data }: { data: StoryData }) {
             </div>
             <div className="win-body">
               <div className="win-scroll pa">
-                <Instructions prompt={data.prompts.enrich} />
+                <Instructions prompt={data.prompts.variations} />
                 <div className="blk">
                   <span className="blk-label">complaint</span>
                   <p className="blk-query">{data.query}</p>
                 </div>
                 <div className="blk">
                   <span className="blk-label">return</span>
-                  <pre className="blk-pre blk-schema">{ENRICH_RETURN}</pre>
+                  <pre className="blk-pre blk-schema">{VARIATIONS_RETURN}</pre>
                 </div>
               </div>
 
@@ -287,7 +287,13 @@ export function Prompt({ data }: { data: StoryData }) {
             <div className="win-bar">
               <span className="win-label">Response</span>
               <span className="win-live">
-                <i /> {enrich.model} · temperature 0
+                <i />
+                <span className="win-model">
+                  {llm.model} · temperature {llm.temperature}
+                </span>
+                <small className="win-fallback">
+                  fallback {llm.fallback} · {llm.fallbackTemperature.toFixed(1)}
+                </small>
               </span>
               <span className="win-meta">
                 <b className="tok-out">0</b> tokens out
@@ -296,24 +302,6 @@ export function Prompt({ data }: { data: StoryData }) {
             <div className="win-body">
               <div className="win-scroll ra">
                 <div className="ln">{p("{")}</div>
-                <div className="ln i1">
-                  {k("canonical_query")}
-                  {p(": ")}
-                  {q(enrich.canonical)}
-                  {p(",")}
-                </div>
-                <div className="ln i1">
-                  {k("intents")}
-                  {p(": [{ ")}
-                  {k("title")}
-                  {p(": ")}
-                  {q(enrich.intent.title)}
-                  {p(", ")}
-                  {k("domain")}
-                  {p(": ")}
-                  {q(enrich.intent.domain)}
-                  {p(" }],")}
-                </div>
                 <div className="ln i1">
                   {k("variations")}
                   {p(": [")}
@@ -345,44 +333,45 @@ export function Prompt({ data }: { data: StoryData }) {
               <div className="win-scroll rb">
                 <div className="ln">
                   {p("{ ")}
+                  {k("goals")}
+                  {p(": [{ ")}
+                  {k("title")}
+                  {p(": ")}
+                  {q(enrich.intent.title)}
+                  {p(", ")}
+                  {k("domain")}
+                  {p(": ")}
+                  {q(enrich.intent.domain)}
+                  {p(",")}
+                </div>
+                <div className="ln i1">
                   {k("actions")}
                   {p(": [")}
                 </div>
                 {shown.map((a) => (
-                  <Fragment key={a.name}>
-                    <div className="ln i1">
-                      {p("{ ")}
-                      {k("name")}
-                      {p(": ")}
-                      {q(a.name)}
-                      {p(", ")}
-                      {k("steps")}
-                      {p(": [")}
-                    </div>
-                    {a.steps.map((s) => (
-                      <div className="ln i2 ln-step" data-src={s.src[0]} key={s.text}>
-                        {p("{ ")}
-                        {k("text")}
-                        {p(": ")}
-                        {q(s.text)}
-                        {p(", ")}
-                        {k("src_ids")}
-                        {p(": [")}
-                        {s.src.map((id) => (
-                          <span className="t-id" key={id}>
-                            {id}
-                          </span>
-                        ))}
-                        {p("] },")}
-                      </div>
+                  <div className="ln i2 ln-step" data-src={ids(a).join(" ")} key={a.name}>
+                    {p("{ ")}
+                    {k("src_ids")}
+                    {p(": [")}
+                    {ids(a).map((id, i) => (
+                      <Fragment key={id}>
+                        {i > 0 && p(", ")}
+                        <span className="t-id">{id}</span>
+                      </Fragment>
                     ))}
-                    <div className="ln i1">{p("]},")}</div>
-                  </Fragment>
+                    {p("], ")}
+                    {k("name")}
+                    {p(": ")}
+                    {q(a.name)}
+                    {p(" },")}
+                  </div>
                 ))}
-                <div className="ln i1 ln-more">
-                  {p("// ")}+{more.length} more actions, {moreSteps} more steps, every one citing a sentence
-                </div>
-                <div className="ln">{p("]}")}</div>
+                {more.length > 0 && (
+                  <div className="ln i2 ln-more">
+                    {p("// ")}+{more.length} more actions
+                  </div>
+                )}
+                <div className="ln">{p("]}]}")}</div>
               </div>
             </div>
           </div>
@@ -398,16 +387,18 @@ export function Prompt({ data }: { data: StoryData }) {
               >
                 <span className="rail-dot" />
                 <b>{r.label}</b>
-                <small>{r.ms.toLocaleString("en-US")} ms</small>
+                <small>{r.ms === undefined ? "background" : `${r.ms.toLocaleString("en-US")} ms`}</small>
               </li>
             ))}
           </ol>
           <p className="llm-out">
-            {extract.actions.length} actions, {extract.proposed} steps, each pointing at a sentence.{" "}
-            <b>Now we check the model&apos;s homework.</b>
+            {extract.actions.length} actions citing {cited} sentences, split into steps in the article&apos;s own
+            words. <b>Now we check the model&apos;s homework.</b>
           </p>
         </div>
-        <p className="llm-note">Model, token counts and timings are from the recorded demo run.</p>
+        <p className="llm-note">
+          {llm.model} raced against {llm.fastModel}. Token counts and timings are from the recorded demo run.
+        </p>
       </div>
     </section>
   );
