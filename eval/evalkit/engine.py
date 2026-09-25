@@ -3,8 +3,8 @@
 This is the one evalkit module that imports engine code, and only to *measure* it. The gate
 checks (checks.py, catalog.py) stay independent of the engine so they can catch its bugs.
 
-Importing sets ONECLICK_SQLITE to a throwaway file first, so a measurement run never reads or
-writes the API's real cache.sqlite. Requires the offline builds (run from api/):
+Importing points ONECLICK_SQLITE at a throwaway file first, always, even when it is exported: warm()
+calls cache.clear(), so a measurement run must never touch a real cache. Requires the offline builds (run from api/):
 python scripts/build_screengraph.py && python scripts/build_index.py
 """
 
@@ -17,7 +17,7 @@ from pathlib import Path
 from evalkit.paths import DATA_DIR, use_api_package
 
 _SCRATCH = Path(tempfile.mkdtemp(prefix="oneclick-eval-"))
-os.environ.setdefault("ONECLICK_SQLITE", str(_SCRATCH / "cache.sqlite"))
+os.environ["ONECLICK_SQLITE"] = str(_SCRATCH / "cache.sqlite")
 os.environ.setdefault("ONECLICK_DATA", str(DATA_DIR))
 use_api_package()
 

@@ -19,7 +19,7 @@ Usage (from the repo root; keys are read from .env):
     python eval/judge.py --dry-run                            # print the first prompt, no key needed
     python eval/judge.py                                      # judge results.jsonl
     python eval/judge.py --api http://localhost:8000          # kit + unseen, live
-    python eval/judge.py --provider mistral --model mistral-small-latest --limit 5
+    python eval/judge.py --provider mistral --model ministral-14b-latest --limit 5
 Writes eval/results/judge.json.
 """
 
@@ -41,16 +41,23 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from evalkit.paths import REPO_ROOT, RESULTS_DIR, RESULTS_JSONL
+from evalkit.paths import REPO_ROOT, RESULTS_DIR, RESULTS_JSONL, use_api_package
 from evalkit.sets import load_kit, load_set, read_jsonl
 from evalkit.stats import norm_query
+
+use_api_package()
+
+# The engine's own scrub, so the judge's provider sees exactly what the engine's LLM sees: the kit
+# carries a real-looking address, and nothing unscrubbed goes to a third-party model.
+from app.compiler.scrub import scrub
+from app.pipeline.normalize import clean_siis, siis_title
 
 PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "judge.v1.md"
 PROMPT_VERSION = "judge-v1"
 OUT_PATH = RESULTS_DIR / "judge.json"
 CACHE_PATH = RESULTS_DIR / "judge_cache.json"
 DUMMY_URI = "bixby://dummy_positive"
-DEFAULT_MODELS = {"gemini": "gemini-3-flash-preview", "mistral": "mistral-small-latest"}
+DEFAULT_MODELS = {"gemini": "gemini-3.5-flash-lite", "mistral": "ministral-14b-latest"}
 KEY_ENV = {"gemini": "GEMINI_API_KEY", "mistral": "MISTRAL_API_KEY"}
 MAX_ARTICLE_CHARS = 14000
 
@@ -126,16 +133,9 @@ class Plan:
 
 
 def article_text(siis: dict | str | None) -> str:
-    if isinstance(siis, str):
-        text = siis
-    elif isinstance(siis, dict):
-        parts = [siis.get("title"), siis.get("content")]
-        text = "\n".join(p for p in parts if isinstance(p, str) and p.strip())
-        if not text:
-            text = "\n".join(v for v in siis.values() if isinstance(v, str))
-    else:
-        text = ""
-    text = text.strip()
+    """Title and body with URLs and email addresses scrubbed (`clean_siis`), as the engine's LLM sees them."""
+    body, _ = clean_siis(siis)
+    text = "\n".join(p for p in (siis_title(siis), body) if p and p.strip()).strip()
     if len(text) > MAX_ARTICLE_CHARS:
         text = text[:MAX_ARTICLE_CHARS] + "\n[article truncated]"
     return text
@@ -169,7 +169,7 @@ def flatten(contexts: list) -> Plan:
 
 def build_prompt(template: str, item: Item, plan: Plan) -> str:
     template = re.sub(r"\A#[^\n]*\n+", "", template)  # the title line is for humans
-    values = {"query": item.query, "article": item.article, "plan": plan.text, "links": plan.links}
+    values = {"query": scrub(item.query), "article": item.article, "plan": plan.text, "links": plan.links}
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values.get(m.group(1), m.group(0)), template)
 
 

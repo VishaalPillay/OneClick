@@ -93,6 +93,18 @@ def test_article_text_handles_every_siis_shape():
     assert judge.article_text("x" * (judge.MAX_ARTICLE_CHARS + 5)).endswith("[article truncated]")
 
 
+def test_article_and_query_are_scrubbed_before_the_judge_sees_them():
+    siis = {
+        "title": "Help at www.example.com",
+        "content": "Mail kidshome.pin@samsung.com or see https://x.io/a.",
+    }
+    text = judge.article_text(siis)
+    assert "@" not in text and "http" not in text and "www." not in text
+    item = judge.Item("r", "kit", "see https://x.io my screen lags", text, [])
+    prompt = judge.build_prompt("{{query}}\n{{article}}", item, judge.flatten([]))
+    assert "http" not in prompt and "my screen lags" in prompt
+
+
 def test_clean_clamps_and_accounts_for_skipped_steps():
     out = judge.clean(ANSWER, judge.flatten(PLAN))
     assert out["score"] == 2
