@@ -12,3 +12,17 @@ services:
       ONECLICK_DATA: /data      # data/kit is copied here; build scripts write /data/build
       ONECLICK_SQLITE: /data/cache.sqlite
     restart: unless-stopped     # ADR-007: the judging window must not find it stopped
+
+  console:
+    build:
+      context: .            # repo root: the page is prerendered from fixtures, prompts and eval sets
+      dockerfile: console/Dockerfile
+      args:
+        # Where the viewer's browser reaches the API, not where this container does.
+        NEXT_PUBLIC_API_URL: ${ONECLICK_PUBLIC_API_URL:-http://127.0.0.1:8000}
+    ports:
+      - "${ONECLICK_CONSOLE_PORT:-3000}:3000"   # the site; set the variable if 3000 is taken
+    depends_on:
+      api:
+        condition: service_healthy  # the live section's first request must not find a cold API
+    restart: unless-stopped

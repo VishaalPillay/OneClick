@@ -13,5 +13,8 @@
 console/node_modules/
 console/.next/
 data/build/
-docs/
-eval/
+# The console build reads the committed metrics report and the eval sets; nothing else from these.
+docs/*
+!docs/metrics.md
+eval/*
+!eval/sets/
