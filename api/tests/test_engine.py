@@ -20,12 +20,14 @@ from app.compiler.validate import validate_with_report
 from app.main import app
 from app.models import DraftAction, DraftStep, Intent, LinkDecision, LinkTier
 from app.pipeline.categorize import categorize
+from app.pipeline.extract import screen_path
 from app.pipeline.ground import ground_with_report
 from app.pipeline.multi_intent import dedupe_with_report
 from app.pipeline.normalize import clean_siis, display_query, normalize_query
 from app.pipeline.order import order
 from app.pipeline.run import run_with_variations
 from app.pipeline.segment import segment_with_sections, split_sections
+from app.pipeline.text import recognisable
 from app.schema import ContextDeeplinkResponse
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -311,6 +313,66 @@ def test_validate_repairs_scrubs_and_drops_but_never_fails():
     assert out["meta"] == {"trace_id": "t"}
     assert validate_with_report({})[0] == {"contexts": []}
     assert validate_with_report({"contexts": "garbage"})[0]["contexts"] == []
+
+
+def test_screen_path_ends_on_the_setting_a_switch_changes():
+    step = 'To do this, go to Settings, tap Display, and then tap the switch next to "Touch sensitivity".'
+    assert screen_path([step]) == "Settings > Display > Touch sensitivity"
+    assert screen_path(["Go to Settings, tap Display, then tap Navigation bar."]) == (
+        "Settings > Display > Navigation bar"
+    )
+
+
+def test_title_case_after_a_hyphen_is_not_a_name():
+    assert trim_title("Inner screen Non-Responsive") == "Inner screen non-responsive"
+    assert trim_title("Wi-Fi keeps dropping") == "Wi-Fi keeps dropping"
+    assert trim_title("Samsung Smart Switch transfer") == "Samsung Smart Switch"
+
+
+def test_restarting_is_critical_in_every_form():
+    for name in ("Restart Your Device", "Restarting Your Device", "Force Restart", "Reboot the phone"):
+        (action,) = categorize([DraftAction(name=name, steps=[DraftStep(text="Press and hold Power.")])])
+        assert action.category == "critical", name
+
+
+WASHING_MACHINE = {
+    "title": "Cleaning the filter on a Samsung washing machine",
+    "content": "Home Appliance: # Cleaning the Debris Filter\n## Step 1: Open the Filter Cover\n"
+    "Open the small cover at the bottom front of the washing machine and place a shallow tray under it.\n"
+    "## Step 2: Drain the Hose\nPull out the emergency drain hose and let the remaining water run out.\n"
+    "## Step 3: Clean the Filter\nTurn the filter counterclockwise, rinse it under running water, and "
+    "screw it back in.",
+}
+
+
+def test_an_article_about_something_else_is_a_no_match_even_without_a_model():
+    """Rules-only extraction copies the article's instructions, so it must refuse an article that is
+    about something else: a phone complaint never gets washing machine steps."""
+    cache.clear()
+    r = client.post(
+        "/v1/troubleshoot",
+        json={
+            "query": "My Galaxy S22 screen is completely black and will not turn on.",
+            "siis_response": WASHING_MACHINE,
+        },
+    )
+    assert r.status_code == 200 and r.json()["contexts"] == [] and r.json()["meta"]["fallback"] == "no_match"
+    cache.clear()
+
+
+@pytest.mark.parametrize("query", ["asdkjh qwe zzz 12345 ?????? ////", "", "   "])
+def test_a_complaint_with_no_readable_word_is_a_no_match(query):
+    cache.clear()
+    row = KIT[0]
+    r = client.post("/v1/troubleshoot", json={"query": query, "siis_response": row["siis_response"]})
+    assert r.status_code == 200 and r.json()["contexts"] == [] and r.json()["meta"]["fallback"] == "no_match"
+    cache.clear()
+
+
+def test_typos_and_other_languages_are_still_read():
+    assert recognisable("my galxy s22 screne is compltely blak", "The screen is black.")
+    assert recognisable("bhai mera screen bilkul black ho gaya", "The screen is black.")
+    assert not recognisable("asdkjh qwe zzz 12345", "The screen is black.")
 
 
 # ---- the whole pipeline on the kit (rules-only: no keys in CI) ---------------------------------------

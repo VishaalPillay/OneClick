@@ -53,6 +53,8 @@ _MANUAL_PHRASES = (
 # screen, even when its name contains a word like "reset" ("Settings > General management > Reset").
 _IN_APP_VERBS = frozenset(["open", "enable", "disable", "set", "adjust", "check"])
 _SETTINGS_PATH_RE = re.compile(r"^\s*settings\b", re.IGNORECASE)
+# Verbs that change a setting on a screen; with no toggle for them, the screen's own page will do.
+_CHANGE_VERBS = frozenset(["enable", "disable", "set", "adjust"])
 
 
 def _haystack(action: DraftAction) -> str:
@@ -99,6 +101,13 @@ def resolve(action: DraftAction) -> LinkDecision:
 
     results = retrieval.search(action.screen_path, action.intent_verb, k=1)
     score = results[0][1] if results else 0.0
+    if score < settings.link_catalog_min_score and (action.intent_verb or "").lower() in _CHANGE_VERBS:
+        # No on/off entry for this change, but the screen that holds it may still have a page link
+        # ("Select Buttons to turn off full screen gestures" -> View Navigation bar). Opening the
+        # exact screen is the right one tap; the floor below still has to be cleared.
+        page = retrieval.search(action.screen_path, "open", k=1)
+        if page and page[0][1] > score:
+            results, score = page, page[0][1]
     confidence = min(score / settings.link_max_score, 1.0)
 
     if results and score >= settings.link_catalog_min_score:

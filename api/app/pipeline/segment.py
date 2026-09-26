@@ -6,6 +6,7 @@ sentences `S1..Sn` across the whole article. Steps cite these ids, so the rule m
 """
 
 import re
+from collections import OrderedDict
 
 import numpy as np
 
@@ -50,13 +51,49 @@ def _section_text(section: dict) -> str:
     return f"{section['heading']}. {body}".strip(". ")
 
 
+# Section vectors by text. A request embeds its article twice (segment, then the rescore once call B
+# has named the intents); an 18k-character article has 65 sections, ~1.5 s of CPU each time.
+_section_vectors: OrderedDict[str, list[float]] = OrderedDict()
+_SECTION_VECTORS_MAX = 4096
+
+
+def _embed_sections(texts: list[str]) -> list[list[float]]:
+    missing = list(dict.fromkeys(t for t in texts if t not in _section_vectors))
+    for text, vector in zip(missing, dense.embed(missing)):
+        _section_vectors[text] = vector
+    for text in texts:
+        _section_vectors.move_to_end(text)
+    while len(_section_vectors) > _SECTION_VECTORS_MAX:
+        _section_vectors.popitem(last=False)
+    return [_section_vectors[t] for t in texts]
+
+
+def prewarm_kit() -> int:
+    """Embed the kit articles' sections at startup. The first requests on a fresh process spent 1.4-1.8 s
+    in segment (the embedder's first long inputs) against ~20 ms once warm; this moves that cost into
+    startup, before /health goes green, and fills the section cache for the kit articles."""
+    import json
+    from pathlib import Path
+
+    from app.pipeline.normalize import clean_siis
+
+    path = Path(settings.data_dir) / "kit" / "siis_responses.json"
+    if not path.exists():
+        return 0
+    texts = []
+    for record in json.loads(path.read_text(encoding="utf-8")).get("responses", []):
+        clean, _ = clean_siis(record.get("siis_response"))
+        texts += [_section_text(s) for s in split_sections(clean)] if clean else []
+    return len(_embed_sections(texts))
+
+
 def section_relevance(sections: list[dict], intents: list[Intent]) -> list[list[float]]:
     """Cosine between each intent and each section (heading + body): [section][intent], 0-1."""
     if not sections or not intents:
         return [[0.0] * len(intents) for _ in sections]
-    section_texts = [_section_text(s) for s in sections]
-    vectors = np.asarray(dense.embed(section_texts + [i.text for i in intents]), dtype=np.float32)
-    sims = vectors[: len(sections)] @ vectors[len(sections) :].T
+    section_vectors = np.asarray(_embed_sections([_section_text(s) for s in sections]), dtype=np.float32)
+    intent_vectors = np.asarray(dense.embed([i.text for i in intents]), dtype=np.float32)
+    sims = section_vectors @ intent_vectors.T
     return [[round(float(min(max(v, 0.0), 1.0)), 2) for v in row] for row in sims]
 
 
