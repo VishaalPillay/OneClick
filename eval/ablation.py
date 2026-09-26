@@ -204,7 +204,7 @@ def main() -> None:
     parser.add_argument("--only", help="comma-separated subset of: " + ", ".join(VARIANTS))
     parser.add_argument("--gold", type=Path, default=GOLD_PATH)
     parser.add_argument("--out", type=Path, default=OUT_PATH)
-    parser.add_argument("--llm-model", default="mistral-small-latest")
+    parser.add_argument("--llm-model", default="ministral-14b-latest")
     parser.add_argument("--rate-in", type=float, default=0.10, help="USD per 1M prompt tokens")
     parser.add_argument("--rate-out", type=float, default=0.30, help="USD per 1M completion tokens")
     parser.add_argument("--misses", action="store_true", help="print every step scored below 2")

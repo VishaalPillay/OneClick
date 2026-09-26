@@ -13,7 +13,7 @@ not measured until the engine returns non-empty plans.
 
 Usage (from the repo root):
     python eval/report.py
-    python eval/report.py --model "gemini-2.5-flash, fallback mistral-small" --env "2 vCPU / 4 GB / Ubuntu 22.04"
+    python eval/report.py --model "ministral-14b-latest" --env "2 vCPU / 4 GB / Ubuntu 22.04"
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ import platform
 import re
 import subprocess
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -71,7 +72,7 @@ def commit_sha() -> str:
 def engine_models(load: dict | None) -> str | None:
     """The models that answered the cold pass of `loadtest.py --mode api`, most used first."""
     models = (((load or {}).get("api") or {}).get("cold") or {}).get("models") or {}
-    return ", ".join(f"{m} ({n} cold queries)" for m, n in models.items()) or None
+    return ", ".join(f"{m} ({n} cold {'query' if n == 1 else 'queries'})" for m, n in models.items()) or None
 
 
 def embed_model() -> str:
@@ -234,7 +235,8 @@ def _latency_rows(load: dict | None) -> tuple[list[tuple[str, str, str, str]], l
         out.append((name, target, ms(s["p50_ms"]), ms(s["p95_ms"])))
     if api:
         notes.append(
-            f"Measured over HTTP ({api['source']}), server-side `X-Latency-Ms` where the API sends it. "
+            f"Measured over HTTP against {_where(api['source'])}, server-side `X-Latency-Ms` where the API "
+            "sends it. "
             "Cache rows are timed on the calls that hit, the cold row on the calls that missed."
         )
     elif cache:
@@ -243,6 +245,12 @@ def _latency_rows(load: dict | None) -> tuple[list[tuple[str, str, str, str]], l
             "time only, without HTTP or the final scrub. The cold path needs the engine and is not measured yet."
         )
     return out, notes
+
+
+def _where(source: str) -> str:
+    """Where the API ran, without printing its URL (metrics.md is graded like any output: no URLs)."""
+    local = any(h in source for h in ("localhost", "127.0.0.1", "0.0.0.0"))
+    return "a local API started on an empty cache" if local else "the deployed API"
 
 
 def section3(load: dict | None) -> list[str]:
@@ -380,17 +388,20 @@ def section6(ablation: dict | None, load: dict | None, gates: dict | None, judge
                 f"**Over-cautious links.** {len(wrong_dummy)} steps with a real catalog entry fell back to the "
                 f"placeholder because the match scored under the catalog floor: {screens}."
             )
-    cache = (load or {}).get("cache") or {}
+    cache = (load or {}).get("api") or (load or {}).get("cache") or {}
     nm = cache.get("near_miss")
-    if nm and nm.get("leaked"):
-        axes: dict[str, int] = {}
-        for leak in nm["leaked"]:
-            axes[leak.get("differs_in") or "?"] = axes.get(leak.get("differs_in") or "?", 0) + 1
+    counted = [
+        leak
+        for leak in (nm or {}).get("leaked") or []
+        if leak.get("source", "own_kit_answer") in ("own_kit_answer", "other_kit_answer")
+    ]
+    if counted:
+        axes = Counter(leak.get("differs_in") or "?" for leak in counted)
         items.append(
-            f"**Near-miss cache hits.** {nm['hits']} of {nm['n']} near misses were served a cached plan "
-            f"({', '.join(f'{k}: {v}' for k, v in sorted(axes.items()))}). The slot guard compares component "
-            'and symptom only, so a how-do-I request ("I want my screen to go black after a minute") matches '
-            "the cached fault report with the same words; an empty cached symptom also matches any symptom."
+            f"**Near-miss cache hits.** {len(counted)} of {nm['n']} near misses were served a kit answer "
+            f"({', '.join(f'{k}: {v}' for k, v in sorted(axes.items()))}): "
+            + "; ".join(f'"{leak["query"]}"' for leak in counted[:3])
+            + ("." if len(counted) <= 3 else "; ...")
         )
     para = cache.get("paraphrase")
     if para and para.get("by_register"):

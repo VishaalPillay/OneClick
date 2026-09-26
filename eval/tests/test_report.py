@@ -184,3 +184,14 @@ def test_api_near_miss_sources_are_explained(tmp_path):
     assert "30.0% (target <= 2%)" in md
     assert "16 their own row's, 2 another row's" in md
     assert "earlier near miss 14" in md
+
+
+def test_near_miss_limitation_counts_only_kit_answers(tmp_path):
+    leaked = [
+        {"query": "I want my screen dark", "differs_in": "intent", "source": "own_kit_answer"},
+        {"query": "screen cracked", "differs_in": "symptom", "source": "earlier_near_miss"},
+    ]
+    nm = {"n": 60, "hits": 2, "hit_rate": 0.03, "false_hit_rate": 0.017, "leaked": leaked}
+    md = render(tmp_path, loadtest={"api": {"source": "HTTP", "near_miss": nm}})
+    assert "**Near-miss cache hits.** 1 of 60 near misses were served a kit answer (intent: 1)" in md
+    assert "screen cracked" not in md and "slot guard compares" not in md
