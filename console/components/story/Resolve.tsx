@@ -106,12 +106,14 @@ export function Resolve({ data }: { data: StoryData }) {
           <span className="rs-arrow" aria-hidden />
 
           <div className="rs-card rs-rank">
-            <span className="rs-label">Screen candidates · BM25 + dense, fused, reranked</span>
+            <span className="rs-label">Screen candidates · BM25 + dense, fused, then name and polarity</span>
             {f.candidates.map((c, i) => (
-              <div className={`rs-cand${i === 0 ? " rs-cand-win" : ""}`} key={c.path}>
-                <span className="rs-cand-name">{c.path.split(" > ").pop()}</span>
+              <div className={`rs-cand${i === 0 ? " rs-cand-win" : ""}`} key={`${c.id}-${i}`}>
+                <span className="rs-cand-name">
+                  {c.path.split(" > ").pop()} <small className="rs-cand-id">{c.id}</small>
+                </span>
                 <span className="rs-bar">
-                  <i style={{ width: `${c.score * 100}%` }} />
+                  <i style={{ width: `${(c.score / f.candidates[0].score) * 100}%` }} />
                 </span>
                 <b>{c.score.toFixed(2)}</b>
               </div>
@@ -138,7 +140,7 @@ export function Resolve({ data }: { data: StoryData }) {
             <span className="rs-type">{f.originalType} · an enable toggle, so it can prove itself</span>
           </div>
         </div>
-        <p className="st-fine rs-fine">Candidate scores come from the recorded demo run.</p>
+        <p className="st-fine rs-fine">Candidates and scores from one recorded run of the resolver.</p>
 
         <div className="rs-tiers">
           <div className="tier tier-lime">

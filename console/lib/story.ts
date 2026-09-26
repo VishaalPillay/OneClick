@@ -1,21 +1,23 @@
 /**
- * Everything the story page at `/` shows, derived from the shipped fixtures.
+ * Everything the story page at `/` shows, derived from one recorded run of the real engine.
  *
- * Nothing here is typed in by hand: the complaint, the model's output, the article sentences,
- * the grounding verdicts, the resolver's candidates and the final plan all come from
- * data/fixtures/touch_lag/, which api/tests/test_fixtures.py guards. The fixture README marks
- * stage latencies, token counts, grounding scores and the dropped step as illustrative; the
- * page says so wherever one of them appears.
+ * Nothing here is typed in by hand: the complaint, the model's answer, the article sentences, the
+ * grounding verdicts, the resolver's candidates, the final plan, both cache hits and the background
+ * variations call all come from console/recordings/touch_lag/, written by
+ * `python eval/tools/record_story.py` (the shipping pipeline, in-process, real keys). Timings and
+ * token counts are that run's own. data/fixtures/ stays what it is: the engine tests' contract.
  *
  * Built on the server and handed to the client as plain JSON, so only what the page renders
  * reaches the browser: the article arrives as the segment stage's numbered sentences, never as
  * the raw request body.
  */
 
-import cacheJson from "@fixtures/cache_events.json";
-import planJson from "@fixtures/plan.json";
-import requestJson from "@fixtures/request.json";
-import streamJson from "@fixtures/stream.json";
+import aboutJson from "@/recordings/touch_lag/about.json";
+import cacheJson from "@/recordings/touch_lag/cache_events.json";
+import planJson from "@/recordings/touch_lag/plan.json";
+import requestJson from "@/recordings/touch_lag/request.json";
+import streamJson from "@/recordings/touch_lag/stream.json";
+import variationsJson from "@/recordings/touch_lag/variations.json";
 import { checkBody, type CatalogEntry, type Check } from "@/lib/checks";
 import type { PlanContext, ResponseBody } from "@/lib/plan";
 import type { StageEvent, StageName } from "@/lib/trace";
@@ -94,6 +96,8 @@ export interface LlmConfig {
   temperature: number; // Mistral models
   fallback: string; // last resort for every call
   fallbackTemperature: number;
+  preferDeadline: number; // seconds the 14B answer is waited for
+  budget: number; // the extract stage gives up here
 }
 
 export interface StoryInputs {
@@ -150,7 +154,10 @@ export interface StoryData {
     kept: number;
     proposed: number;
     coverage: number;
-    dropped: { action: string; text: string; src: string[]; score: number; reason: string };
+    /** The first step grounding threw out, if the run had one (select mode rarely does). */
+    dropped: { action: string; text: string; src: string[]; score: number; reason: string } | null;
+    /** The kept step that cleared the bar by the least. */
+    lowest: { action: string; text: string; src: string[]; score: number };
   };
   resolve: {
     counts: { catalog: number; dummy: number; manual: number };
@@ -160,7 +167,7 @@ export interface StoryData {
       path: string;
       verb: string;
       entryId: string;
-      candidates: { path: string; score: number }[];
+      candidates: { path: string; id: string; score: number }[];
       uri: string;
       message: string;
       originalType: string;
@@ -176,6 +183,8 @@ export interface StoryData {
     semantic: number;
   };
   semanticHit: { query: string; matched: string; similarity: number; threshold: number };
+  /** When and how the run was recorded (eval/tools/record_story.py). */
+  recording: { at: string; commit: string | null; coldTries: number; model: string };
   prompts: { variations: PromptFile; extract: PromptFile };
   llm: LlmConfig;
   proof: Proof;
@@ -221,15 +230,16 @@ export function buildStory({ prompts, llm, proof, catalog, multiIntent, presets 
     threshold: number;
     siis_title: string;
   }>("cache");
-  const enrich = detail<{
-    canonical_query: string;
-    intents: { title: string; domain: string }[];
-    variations: string[];
-    dropped_variations: { text: string; reason: string; jaccard: number }[];
+  const enrich = detail<{ canonical_query: string }>("enrich");
+  // The variations call runs in the background (it never delays the answer), so its result is not a
+  // stage frame: the recorder waited for it and kept what it returned.
+  const variations = variationsJson as unknown as {
+    kept: string[];
+    dropped: { text: string; reason: string; jaccard: number }[];
     model: string;
     tokens_in: number;
     tokens_out: number;
-  }>("enrich");
+  };
   const segment = detail<{
     sections: { id: string; heading: string; relevant: boolean; relevance: number[] }[];
     sentences: { id: string; section: string; text: string }[];
@@ -237,6 +247,7 @@ export function buildStory({ prompts, llm, proof, catalog, multiIntent, presets 
   }>("segment");
   const extract = detail<{
     actions: RawAction[];
+    intents: { title: string; domain: string }[];
     model: string;
     tokens_in: number;
     tokens_out: number;
@@ -247,6 +258,7 @@ export function buildStory({ prompts, llm, proof, catalog, multiIntent, presets 
     proposed_steps: number;
     coverage: number;
     dropped_steps: { action: string; text: string; src_ids: string[]; grounding_score: number; reason: string }[];
+    actions: RawAction[];
   }>("ground");
   const resolve = detail<{
     counts: { catalog: number; dummy: number; manual: number };
@@ -256,7 +268,7 @@ export function buildStory({ prompts, llm, proof, catalog, multiIntent, presets 
       intent_verb: string | null;
       tier: string;
       entry_id: string | null;
-      candidates: { path: string; score: number }[];
+      candidates: { entry_id: string; score: number }[];
     }[];
   }>("resolve");
   const compile = detail<{
@@ -284,8 +296,23 @@ export function buildStory({ prompts, llm, proof, catalog, multiIntent, presets 
   const extracted = extract.actions.find((a) => a.name === link.action)!;
   const switchStep = extracted.steps.find((s) => /switch/i.test(s.text)) ?? extracted.steps[0];
 
+  // Extraction proposes steps ungraded; the ground stage scores them. Each proposed step takes the
+  // score grounding gave it (a dropped step keeps its own, from dropped_steps).
+  const graded = new Map([
+    ...ground.actions.flatMap((a) => a.steps.map((st) => [`${a.name}|${st.text}`, st.grounding_score] as const)),
+    ...ground.dropped_steps.map((d) => [`${d.action}|${d.text}`, d.grounding_score] as const),
+  ]);
+  for (const a of extract.actions) {
+    for (const st of a.steps) st.grounding_score = graded.get(`${a.name}|${st.text}`) ?? st.grounding_score;
+  }
   const dropped = ground.dropped_steps[0];
+  const kept = extract.actions.flatMap((a) => a.steps.map((st) => ({ action: a.name, ...st })));
+  const lowest = kept.reduce((low, st) => (st.grounding_score < low.grounding_score ? st : low), kept[0]);
   const inputs = compile.score_inputs[0];
+  // A candidate is a catalog entry; its own message names the screen ("Enable Touch sensitivity").
+  const screenName = (id: string) =>
+    (catalog.find((e) => e.id === id)?.message ?? id).replace(/^(Enable|Disable|View|Adjust|Open)\s+/, "");
+  const about = aboutJson as unknown as { recorded_at: string; commit: string | null; cold_tries: number };
 
   return {
     query: request.query,
@@ -294,13 +321,13 @@ export function buildStory({ prompts, llm, proof, catalog, multiIntent, presets 
     cache: { ms: msOf("cache"), threshold: cache.threshold },
     enrich: {
       ms: msOf("enrich"),
-      model: enrich.model,
-      tokensIn: enrich.tokens_in,
-      tokensOut: enrich.tokens_out,
+      model: variations.model,
+      tokensIn: variations.tokens_in,
+      tokensOut: variations.tokens_out,
       canonical: enrich.canonical_query,
-      intent: { title: enrich.intents[0].title, domain: enrich.intents[0].domain },
-      kept: enrich.variations,
-      dropped: enrich.dropped_variations,
+      intent: { title: extract.intents[0].title, domain: extract.intents[0].domain },
+      kept: variations.kept,
+      dropped: variations.dropped,
     },
     article: {
       sections: segment.sections.map((s) => ({
@@ -325,13 +352,16 @@ export function buildStory({ prompts, llm, proof, catalog, multiIntent, presets 
       kept: ground.kept_steps,
       proposed: ground.proposed_steps,
       coverage: ground.coverage,
-      dropped: {
-        action: dropped.action,
-        text: dropped.text,
-        src: dropped.src_ids,
-        score: dropped.grounding_score,
-        reason: dropped.reason,
-      },
+      dropped: dropped
+        ? {
+            action: dropped.action,
+            text: dropped.text,
+            src: dropped.src_ids,
+            score: dropped.grounding_score,
+            reason: dropped.reason,
+          }
+        : null,
+      lowest: { action: lowest.action, text: lowest.text, src: lowest.src_ids, score: lowest.grounding_score },
     },
     resolve: {
       counts: resolve.counts,
@@ -341,7 +371,7 @@ export function buildStory({ prompts, llm, proof, catalog, multiIntent, presets 
         path: link.screen_path ?? "",
         verb: link.intent_verb ?? "",
         entryId: link.entry_id ?? "",
-        candidates: link.candidates,
+        candidates: link.candidates.map((c) => ({ path: screenName(c.entry_id), id: c.entry_id, score: c.score })),
         uri: group.actionableDeeplink?.deeplink ?? "",
         message: group.actionableDeeplink?.message ?? "",
         originalType: group.actionableDeeplink?.originalType ?? "",
@@ -366,6 +396,12 @@ export function buildStory({ prompts, llm, proof, catalog, multiIntent, presets 
       matched: hits.semantic.event.detail.matched_query,
       similarity: hits.semantic.event.detail.similarity,
       threshold: hits.semantic.event.detail.threshold,
+    },
+    recording: {
+      at: about.recorded_at,
+      commit: about.commit,
+      coldTries: about.cold_tries,
+      model: extract.model,
     },
     prompts,
     llm,

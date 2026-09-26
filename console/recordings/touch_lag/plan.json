@@ -1,0 +1,170 @@
+{
+  "contexts": [
+    {
+      "goal": "Follow these steps to perform this Touchscreen Performance Issues Troubleshooting.",
+      "title": "Touchscreen input lag",
+      "actions": [
+        {
+          "actionName": "Remove Screen Protector",
+          "description": "It will improve touch responsiveness",
+          "stepGroups": [
+            {
+              "steps": [
+                "If your screen protector is peeling or has debris under it, please remove it."
+              ],
+              "actionableDeeplink": null,
+              "validationDeeplink": null
+            }
+          ],
+          "category": "manual"
+        },
+        {
+          "actionName": "Enable Touch Sensitivity",
+          "description": "It will enhance touchscreen accuracy",
+          "stepGroups": [
+            {
+              "steps": [
+                "Go to Settings.",
+                "Tap Display.",
+                "Tap the switch next to Touch sensitivity."
+              ],
+              "actionableDeeplink": {
+                "deeplink": "bixby://masked/act/14eb42b895",
+                "description": "Enables touch sensitivity via device Settings on the device.",
+                "message": "Enable Touch sensitivity",
+                "originalType": "onURL"
+              },
+              "validationDeeplink": {
+                "deeplink": "bixby://masked/val/6451858b28",
+                "key": "Touch sensitivity",
+                "resultType": "boolean",
+                "condition": "equal",
+                "value": "True"
+              }
+            }
+          ],
+          "category": "auto"
+        },
+        {
+          "actionName": "Disable Full Screen Gestures",
+          "description": "It will prevent misinterpretation of inputs",
+          "stepGroups": [
+            {
+              "steps": [
+                "Go to Settings.",
+                "Tap Display.",
+                "Tap Navigation bar.",
+                "Select Buttons to turn off full screen gestures."
+              ],
+              "actionableDeeplink": {
+                "deeplink": "bixby://dummy_positive",
+                "description": "Opens the navigation bar buttons settings page",
+                "message": "Open navigation bar buttons screen",
+                "originalType": "placeholder"
+              },
+              "validationDeeplink": null
+            }
+          ],
+          "category": "auto"
+        },
+        {
+          "actionName": "Disable Touch Sensitivity",
+          "description": "It will reduce overly sensitive touch",
+          "stepGroups": [
+            {
+              "steps": [
+                "To turn off this feature, navigate to Settings, tap Display, and then tap the switch next to Touch sensitivity to disable it."
+              ],
+              "actionableDeeplink": {
+                "deeplink": "bixby://masked/act/1b0d34e9b4",
+                "description": "Disables touch sensitivity via device Settings on the device.",
+                "message": "Disable Touch sensitivity",
+                "originalType": "offURL"
+              },
+              "validationDeeplink": {
+                "deeplink": "bixby://masked/val/6451858b28",
+                "key": "Touch sensitivity"
+              }
+            }
+          ],
+          "category": "auto"
+        },
+        {
+          "actionName": "Restart Device",
+          "description": "It will resolve minor touchscreen issues",
+          "stepGroups": [
+            {
+              "steps": [
+                "For devices with a Power button: Press and hold the Power button, then tap Restart.",
+                "Tap Restart again to confirm."
+              ],
+              "actionableDeeplink": null,
+              "validationDeeplink": null
+            }
+          ],
+          "category": "critical"
+        },
+        {
+          "actionName": "Force Restart Device",
+          "description": "It will reboot unresponsive touchscreen",
+          "stepGroups": [
+            {
+              "steps": [
+                "Once the device turns off, press the Power button or Side button again to turn it back on."
+              ],
+              "actionableDeeplink": null,
+              "validationDeeplink": null
+            }
+          ],
+          "category": "critical"
+        },
+        {
+          "actionName": "Enter Safe Mode",
+          "description": "It will check for third-party app conflicts",
+          "stepGroups": [
+            {
+              "steps": [
+                "Press and hold the Power button (or Side button) and the Volume down button at the same time.",
+                "Touch and hold Power off.",
+                "Tap Safe mode."
+              ],
+              "actionableDeeplink": null,
+              "validationDeeplink": null
+            }
+          ],
+          "category": "critical"
+        },
+        {
+          "actionName": "Factory Data Reset",
+          "description": "It will restore default settings",
+          "stepGroups": [
+            {
+              "steps": [
+                "Navigate to and open Settings.",
+                "Tap General management.",
+                "Tap Reset.",
+                "Tap Factory data reset.",
+                "Swipe to and tap Reset.",
+                "Tap Delete all."
+              ],
+              "actionableDeeplink": null,
+              "validationDeeplink": null
+            }
+          ],
+          "category": "critical"
+        }
+      ],
+      "score": 0.81
+    }
+  ],
+  "meta": {
+    "latency_ms": 5263.9,
+    "cache_hit": false,
+    "cache_tier": null,
+    "model": "ministral-8b-latest",
+    "cost_usd": 0.0,
+    "trace_id": "t_1425756014",
+    "fallback": null,
+    "source": null
+  }
+}

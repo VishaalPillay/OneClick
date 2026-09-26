@@ -11,6 +11,11 @@ docker compose up --build
 curl localhost:8000/health
 ```
 
+That starts two services: the engine API on `http://127.0.0.1:8000` and the site on
+`http://localhost:3000`, whose **Try it live** section streams the API from your browser. If port 3000
+is taken, `ONECLICK_CONSOLE_PORT=3100 docker compose up --build`. The site is prerendered, so the API
+address is baked in at build time: set `ONECLICK_PUBLIC_API_URL` to serve it against an API elsewhere.
+
 ## Local development (API)
 
 ```bash
@@ -46,7 +51,7 @@ see the last section of [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | `api/app/device/` | Device simulator |
 | `api/app/obs/` | Logs, metrics, traces |
 | `api/scripts/` | Offline builds and `results.jsonl` generation |
-| `console/` | Next.js demo console |
+| `console/` | Next.js site: the scroll story and the live try-it section |
 | `eval/` | Gate replica, judge, ablation, load tests, test sets |
 | `data/` | Kit files, gold labels, slot lexicon, dependency table |
 | `docs/` | Architecture, metrics.md, deck, video link |

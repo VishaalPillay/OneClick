@@ -23,7 +23,9 @@ export function PhoneSection({ data }: { data: StoryData }) {
     const v = a.stepGroups[0]?.validationDeeplink;
     return Boolean(v && "value" in v);
   }).length;
-  const critical = plan.actions.filter((a) => a.category === "critical").length;
+  const criticalActions = plan.actions.filter((a) => a.category === "critical");
+  const critical = criticalActions.length;
+  const lastNames = criticalActions.map((a) => a.actionName.toLowerCase());
 
   useGSAP(
     () => {
@@ -175,7 +177,7 @@ export function PhoneSection({ data }: { data: StoryData }) {
           <div className="ph-phone">
             <Galaxy>
               <PlanScreen plan={plan} featured={featured?.actionName ?? ""} />
-              <SettingsScreen setting={setting} />
+              <SettingsScreen setting={setting} value={f.validation.value} />
             </Galaxy>
           </div>
           <span className="ph-shadow" />
@@ -220,8 +222,9 @@ export function PhoneSection({ data }: { data: StoryData }) {
             </div>
             <h4>Safe order</h4>
             <p>
-              Gentle fixes come first. Restart, safe mode, update and reset come last, and the backup comes
-              before the reset.
+              Gentle fixes come first.{" "}
+              {lastNames.length > 0 &&
+                `${lastNames.slice(0, -1).join(", ")}${lastNames.length > 1 ? " and " : ""}${lastNames.at(-1)} come last.`}
             </p>
             <div className="ph-card-row">
               <b>

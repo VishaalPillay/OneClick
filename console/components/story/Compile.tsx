@@ -214,7 +214,7 @@ export function Compile({ data }: { data: StoryData }) {
           </ol>
         </div>
         <p className="st-fine cp-fine">
-          Checked at build time with the same rules as the eval gate replica, on the recorded demo run.
+          Checked at build time with the same rules as the eval gate replica, on the recorded run.
         </p>
 
         <div className="cp-cards">
@@ -227,7 +227,7 @@ export function Compile({ data }: { data: StoryData }) {
                 <span className="cp-goal" key={g.title}>
                   <b>{g.title}</b>
                   <small>
-                    {g.actions} actions · score {g.score.toFixed(2)}
+                    {g.actions} {g.actions === 1 ? "action" : "actions"} · score {g.score.toFixed(2)}
                   </small>
                 </span>
               ))}
@@ -251,12 +251,13 @@ export function Compile({ data }: { data: StoryData }) {
             </p>
           </article>
           <article className="cp-card cp-card-lime">
-            <span className="cp-big">6 s</span>
+            <span className="cp-big">{data.llm.preferDeadline} s</span>
             <h3>Two models, one race</h3>
             <p>
-              Open-weight Ministral 14B and 8B read the same prompt at once, and the 14B answer wins if it is back
-              within six seconds. Gemini is the last fallback; with every model down, the article&apos;s own
-              instructions still answer.
+              Open-weight Ministral 14B and 8B read the same prompt at once. The 14B answer wins if it is back
+              within {data.llm.preferDeadline} seconds, else the first good answer does, and the stage gives up at{" "}
+              {data.llm.budget} s so a new question stays under 8 s. Gemini is the last fallback; with every model
+              down, the article&apos;s own instructions still answer.
             </p>
           </article>
           <article className="cp-card cp-card-blue">

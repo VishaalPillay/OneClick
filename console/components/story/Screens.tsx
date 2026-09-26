@@ -119,7 +119,7 @@ export function PlanScreen({ plan, featured }: { plan: PlanContext; featured: st
  * Where the catalog link lands: Settings › Display, with the target switch. The rows around it
  * are the real neighbours on a Galaxy's Display screen, so the jump reads as the actual app.
  */
-export function SettingsScreen({ setting }: { setting: string }) {
+export function SettingsScreen({ setting, value }: { setting: string; value?: string }) {
   return (
     <div className="sc sc-set">
       <div className="set-bar">
@@ -179,7 +179,7 @@ export function SettingsScreen({ setting }: { setting: string }) {
           </svg>
         </span>
         <span>
-          <b>Verified</b> {setting} is on
+          <b>Verifiable</b> {setting} = {value ?? "True"}
         </span>
       </div>
     </div>

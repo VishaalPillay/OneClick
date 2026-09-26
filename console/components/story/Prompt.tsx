@@ -21,11 +21,14 @@ import type { PromptFile, StoryData } from "@/lib/story";
 const VARIATIONS_RETURN = `{ "variations": [str, ...] }   // 12 candidates`;
 
 const EXTRACT_RETURN = `{ "goals": [{ "problem", "title", "topic", "domain",
-             "actions": [{ "src_ids": ["S…"], "name", "description",
-                           "screen_path", "intent_verb" }] }] }`;
+             "actions": [{ "ids": ["S…"], "name", "desc", "path", "verb" }] }] }
+// ids: only this article's own S1…Sn are allowed; one line, no indentation`;
 
 const REASON: Record<string, (j: number, cap: number) => string> = {
   token_jaccard_vs_original: (j) => `filtered · too close to the original (overlap ${j.toFixed(2)})`,
+  token_jaccard_vs_kept: (j) => `filtered · too close to one already kept (overlap ${j.toFixed(2)})`,
+  changes_the_problem: () => "filtered · names a different problem",
+  off_meaning: () => "filtered · drifts from the meaning",
   over_limit: (_, cap) => `filtered · over the cap of ${cap}`,
 };
 
@@ -153,8 +156,8 @@ export function Prompt({ data }: { data: StoryData }) {
           .set($(".llm-call-b"), { attr: { "data-on": "true" } }, b)
           .set($(".rail-segment"), { attr: { "data-state": "done" } }, b)
           .set($(".rail-extract"), { attr: { "data-state": "on" } }, b)
-          .set($(".win-file-a"), { opacity: 0 }, b)
-          .set($(".win-file-b"), { opacity: 1 }, b)
+          .set($(".win-file-a, .win-model-a"), { opacity: 0 }, b)
+          .set($(".win-file-b, .win-model-b"), { opacity: 1 }, b)
           // yPercent, not y: `y` is what follows the newest line, and the two must not fight.
           .fromTo($(".pb, .rb"), { opacity: 0, yPercent: 4 }, { opacity: 1, yPercent: 0, duration: 0.6 }, b + 0.4)
           .to($(".pb .blk"), { autoAlpha: 1, stagger: 0.25 }, b + 0.6)
@@ -288,8 +291,15 @@ export function Prompt({ data }: { data: StoryData }) {
               <span className="win-label">Response</span>
               <span className="win-live">
                 <i />
-                <span className="win-model">
-                  {llm.model} · temperature {llm.temperature}
+                {/* The model that answered each call in the recorded run (the extract race may go to the
+                    fast model), at the engine's Mistral temperature. */}
+                <span className="win-models">
+                  <span className="win-model win-model-a">
+                    {data.enrich.model} · temperature {llm.temperature}
+                  </span>
+                  <span className="win-model win-model-b">
+                    {data.recording.model} · temperature {llm.temperature}
+                  </span>
                 </span>
                 <small className="win-fallback">
                   fallback {llm.fallback} · {llm.fallbackTemperature.toFixed(1)}
@@ -312,7 +322,10 @@ export function Prompt({ data }: { data: StoryData }) {
                     {p(",")}
                   </div>
                 ))}
-                {enrich.dropped.map((v) => (
+                {/* over_limit drops are the engine's template stand-ins, not the model's answer */}
+                {enrich.dropped
+                  .filter((v) => v.reason !== "over_limit")
+                  .map((v) => (
                   <div className="ln i2 ln-drop" key={v.text}>
                     <span className="ln-struck">
                       {q(v.text)}
@@ -351,7 +364,7 @@ export function Prompt({ data }: { data: StoryData }) {
                 {shown.map((a) => (
                   <div className="ln i2 ln-step" data-src={ids(a).join(" ")} key={a.name}>
                     {p("{ ")}
-                    {k("src_ids")}
+                    {k("ids")}
                     {p(": [")}
                     {ids(a).map((id, i) => (
                       <Fragment key={id}>
@@ -397,7 +410,8 @@ export function Prompt({ data }: { data: StoryData }) {
           </p>
         </div>
         <p className="llm-note">
-          {llm.model} raced against {llm.fastModel}. Token counts and timings are from the recorded demo run.
+          {llm.model} raced against {llm.fastModel}; in this recorded run {data.recording.model} answered. Token
+          counts and timings are that run&apos;s own.
         </p>
       </div>
     </section>

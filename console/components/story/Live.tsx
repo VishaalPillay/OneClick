@@ -1,12 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Galaxy } from "@/components/story/Galaxy";
 import { Mark } from "@/components/story/Logo";
 import { gsap, useGSAP } from "@/lib/gsap";
 import type { PlanContext } from "@/lib/plan";
 import type { Preset, StoryData } from "@/lib/story";
-import { API_URL, streamTroubleshoot } from "@/lib/stream";
+import { API_URL, checkHealth, type Health, streamTroubleshoot } from "@/lib/stream";
 import { LLM_STAGES, type StageEvent } from "@/lib/trace";
 
 /**
@@ -21,6 +21,12 @@ import { LLM_STAGES, type StageEvent } from "@/lib/trace";
 
 type Frame = StageEvent<Record<string, unknown>>;
 type Status = "idle" | "running" | "done" | "offline";
+
+// A hosted API may be asleep or still loading its indexes: /health wakes it and says when it can
+// answer. Poll until it is ready, then stop; give up after a few minutes of nothing.
+const HEALTH_POLL_MS = 4000;
+const HEALTH_GIVE_UP_MS = 180_000;
+const LOCAL_API = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(API_URL);
 
 const fmt = (ms: number) => (ms >= 100 ? Math.round(ms).toLocaleString("en-US") : ms.toFixed(1));
 
@@ -63,6 +69,24 @@ export function Live({ data }: { data: StoryData }) {
   const [query, setQuery] = useState(data.presets[0].query);
   const [frames, setFrames] = useState<Frame[]>([]);
   const [status, setStatus] = useState<Status>("idle");
+  const [health, setHealth] = useState<Health>("unknown");
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    const started = Date.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      const h = await checkHealth(ctrl.signal);
+      if (ctrl.signal.aborted) return;
+      setHealth(h);
+      if (h !== "ready" && Date.now() - started < HEALTH_GIVE_UP_MS) timer = setTimeout(poll, HEALTH_POLL_MS);
+    };
+    void poll();
+    return () => {
+      ctrl.abort();
+      clearTimeout(timer);
+    };
+  }, []);
 
   const run = async (p: Preset, q: string) => {
     abort.current?.abort();
@@ -77,7 +101,10 @@ export function Live({ data }: { data: StoryData }) {
         // A mock hint only when the words are still the preset's own; a typed query stands alone.
         { mock: q === p.query ? p.mock : undefined, signal: ctrl.signal },
       );
-      if (!ctrl.signal.aborted) setStatus("done");
+      if (!ctrl.signal.aborted) {
+        setStatus("done");
+        setHealth("ready");
+      }
     } catch {
       if (!ctrl.signal.aborted) setStatus("offline");
     }
@@ -128,7 +155,13 @@ export function Live({ data }: { data: StoryData }) {
         ? { cls: "mock", text: "Mock replay of a recorded run" }
         : status === "done"
           ? { cls: "live", text: `Live engine · ${answeredBy(meta)}` }
-          : { cls: "idle", text: API_URL.replace(/^https?:\/\//, "") };
+          : health === "ready"
+            ? { cls: "ready", text: `Engine ready · ${API_URL.replace(/^https?:\/\//, "")}` }
+            : health === "starting"
+              ? { cls: "mock", text: "Engine waking up…" }
+              : health === "offline"
+                ? { cls: "off", text: "Engine offline" }
+                : { cls: "idle", text: API_URL.replace(/^https?:\/\//, "") };
 
   return (
     <section className="lv" id="live" data-nav="light" ref={root}>
@@ -194,11 +227,24 @@ export function Live({ data }: { data: StoryData }) {
                   </li>
                 );
               })}
-              {status === "idle" && <li className="lv-empty">Pick a complaint or write your own.</li>}
-              {status === "offline" && (
+              {status === "idle" && health !== "offline" && (
                 <li className="lv-empty">
-                  No engine at <code>{API_URL}</code>. Start it with <code>uvicorn app.main:app</code> from{" "}
-                  <code>api/</code>.
+                  {health === "starting"
+                    ? "The engine is loading its indexes. It answers in a moment."
+                    : "Pick a complaint or write your own."}
+                </li>
+              )}
+              {(status === "offline" || (status === "idle" && health === "offline")) && (
+                <li className="lv-empty">
+                  No engine at <code>{API_URL}</code>.{" "}
+                  {LOCAL_API ? (
+                    <>
+                      Start it with <code>docker compose up</code> from the repo root, or{" "}
+                      <code>uvicorn app.main:app</code> from <code>api/</code>.
+                    </>
+                  ) : (
+                    "It may be asleep; this page keeps knocking and will light up when it answers."
+                  )}
                 </li>
               )}
             </ol>

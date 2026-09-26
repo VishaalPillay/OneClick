@@ -25,9 +25,6 @@
     "paths": {
       "@/*": [
         "./*"
-      ],
-      "@fixtures/*": [
-        "../data/fixtures/touch_lag/*"
       ]
     }
   },

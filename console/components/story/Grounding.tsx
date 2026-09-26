@@ -36,7 +36,10 @@ const idNum = (id: string) => Number(id.slice(1));
 export function Grounding({ data }: { data: StoryData }) {
   const root = useRef<HTMLElement>(null);
   const { ground, article } = data;
-  const drop = ground.dropped;
+  // A run that threw a step out shows it; select mode rarely does (the model can only cite the
+  // article's own sentences), so otherwise the card shows the kept step that came closest to the bar.
+  const clean = ground.dropped === null;
+  const drop = ground.dropped ?? { ...ground.lowest, reason: "" };
   const pairs = receipts(data.extract.actions, drop.text);
   const cited = new Set([...pairs.map((p) => p.src), ...drop.src]);
   const sentences = article.sentences.filter((s) => cited.has(s.id)).sort((a, b) => idNum(a.id) - idNum(b.id));
@@ -131,7 +134,7 @@ export function Grounding({ data }: { data: StoryData }) {
         const target = $(`.gr-sent[data-id="${drop.src[0]}"]`);
         tl.set(rogue, { attr: { "data-state": "on" } }, r)
           .to($(".gr-path-rogue"), { strokeDashoffset: 0, duration: 0.8, ease: "power2.inOut" }, r)
-          .set(target, { attr: { "data-state": "bad" } }, r + 0.7)
+          .set(target, { attr: { "data-state": clean ? "on" : "bad" } }, r + 0.7)
           .to($(".gr-meter-fill"), { scaleX: drop.score, duration: 0.9, ease: "power3.out" }, r + 0.8)
           .to($(".gr-verdict-row > span"), { autoAlpha: 1, stagger: 0.25 }, r + 1.1)
           .fromTo(
@@ -139,15 +142,16 @@ export function Grounding({ data }: { data: StoryData }) {
             { autoAlpha: 0, scale: 2.2, rotate: -18 },
             { autoAlpha: 1, scale: 1, rotate: -8, duration: 0.45, ease: "back.out(1.6)" },
             r + 1.9,
-          )
-          .to($(".gr-rogue-text"), { "--strike": 1, duration: 0.4 }, r + 2.1)
-          .to($(".gr-path-rogue"), { opacity: 0, duration: 0.4 }, r + 2.6)
-          .set(target, { attr: { "data-state": "on" } }, r + 2.6)
-          // Opacity, not autoAlpha: the card is hidden by its entrance when this timeline first
-          // renders, and autoAlpha would take that as its starting value.
-          .to(rogue, { y: 200, rotate: 7, opacity: 0, duration: 1.1, ease: "power2.in" }, r + 2.7)
-          .to($(".gr-out"), { autoAlpha: 1, duration: 0.5 }, r + 3.2)
-          .to({}, { duration: 0.8 });
+          );
+        if (!clean) {
+          tl.to($(".gr-rogue-text"), { "--strike": 1, duration: 0.4 }, r + 2.1)
+            .to($(".gr-path-rogue"), { opacity: 0, duration: 0.4 }, r + 2.6)
+            .set(target, { attr: { "data-state": "on" } }, r + 2.6)
+            // Opacity, not autoAlpha: the card is hidden by its entrance when this timeline first
+            // renders, and autoAlpha would take that as its starting value.
+            .to(rogue, { y: 200, rotate: 7, opacity: 0, duration: 1.1, ease: "power2.in" }, r + 2.7);
+        }
+        tl.to($(".gr-out"), { autoAlpha: 1, duration: 0.5 }, r + (clean ? 2.3 : 3.2)).to({}, { duration: 0.8 });
 
         return () => {
           kept.textContent = String(ground.kept);
@@ -179,7 +183,11 @@ export function Grounding({ data }: { data: StoryData }) {
             <p>
               steps proven against the article.
               <br />
-              <span className="gr-out">{ground.proposed - ground.kept} thrown out.</span>
+              <span className="gr-out" data-clean={clean ? "true" : undefined}>
+                {clean
+                  ? "None thrown out: the model can only point at the article's sentences."
+                  : `${ground.proposed - ground.kept} thrown out.`}
+              </span>
             </p>
           </div>
         </header>
@@ -199,8 +207,16 @@ export function Grounding({ data }: { data: StoryData }) {
                 </span>
               </div>
             ))}
-            <div className="gr-step gr-rogue" data-i="rogue" data-src={drop.src[0]} data-state="off">
-              <span className="gr-act">{drop.action} · also proposed by the model</span>
+            <div
+              className="gr-step gr-rogue"
+              data-i="rogue"
+              data-src={drop.src[0]}
+              data-state="off"
+              data-clean={clean ? "true" : undefined}
+            >
+              <span className="gr-act">
+                {drop.action} · {clean ? "the closest call in this run" : "also proposed by the model"}
+              </span>
               <p className="gr-rogue-text">{drop.text}</p>
               <span className="gr-cite">{drop.src[0]}</span>
               <div className="gr-verdict">
@@ -215,7 +231,7 @@ export function Grounding({ data }: { data: StoryData }) {
                   {noSharedTerm && <span>shared words: none</span>}
                 </div>
               </div>
-              <span className="gr-stamp">Dropped</span>
+              <span className="gr-stamp">{clean ? "Kept" : "Dropped"}</span>
             </div>
           </div>
 
@@ -241,7 +257,9 @@ export function Grounding({ data }: { data: StoryData }) {
             A step stays only if it <b>means what its sentence says</b> and <b>shares a real word</b> with it.
             Fail either and it never reaches your phone.
           </p>
-          <p className="st-fine">Match scores and the dropped step come from the recorded demo run.</p>
+          <p className="st-fine">
+            Steps and match scores from one recorded run of the engine ({data.recording.model}).
+          </p>
         </div>
       </div>
     </section>

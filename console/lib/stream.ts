@@ -12,6 +12,18 @@ import type { StageEvent } from "@/lib/trace";
 // as IPv6 first and give up on a refused connection.
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
+/** Whether the viewer can reach the engine, from GET /health (503 while it loads its indexes). */
+export type Health = "unknown" | "ready" | "starting" | "offline";
+
+export async function checkHealth(signal?: AbortSignal): Promise<Health> {
+  try {
+    const res = await fetch(`${API_URL}/health`, { cache: "no-store", signal });
+    return res.ok ? "ready" : res.status === 503 ? "starting" : "offline";
+  } catch {
+    return "offline";
+  }
+}
+
 export interface StreamRequest {
   query: string;
   siis_response: unknown;

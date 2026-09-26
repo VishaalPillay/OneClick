@@ -1,0 +1,147 @@
+{
+  "contexts": [
+    {
+      "goal": "Follow these steps to perform this Display Navigation Settings Troubleshooting.",
+      "title": "Navigation gesture customization",
+      "actions": [
+        {
+          "actionName": "Disable Full Screen Gestures",
+          "description": "It will switch to buttons",
+          "stepGroups": [
+            {
+              "steps": [
+                "Go to Settings.",
+                "Tap Display.",
+                "Tap Navigation bar.",
+                "Select Buttons to turn off full screen gestures."
+              ],
+              "actionableDeeplink": {
+                "deeplink": "bixby://masked/act/2f3dd95259",
+                "description": "Opens the navigation bar settings page in device Settings on the device.",
+                "message": "View Navigation bar",
+                "originalType": "onClickURL"
+              },
+              "validationDeeplink": {
+                "deeplink": "bixby://masked/val/d8310c1b7d",
+                "key": "Navigation bar"
+              }
+            }
+          ],
+          "category": "auto"
+        }
+      ],
+      "score": 0.89
+    },
+    {
+      "goal": "Follow these steps to perform this Touchscreen Performance Issues Troubleshooting.",
+      "title": "Touchscreen input lag",
+      "actions": [
+        {
+          "actionName": "Remove Damaged Screen Protector",
+          "description": "It will improve touch responsiveness",
+          "stepGroups": [
+            {
+              "steps": [
+                "Screen Protectors and Accessories: If you have a third-party screen protector or accessory attached, it might interfere with the touchscreen.",
+                "This is especially true if there's dust or air trapped under the protector, if you have more than one protective film on the screen, or if the film is peeling at the edges.",
+                "If your screen protector is peeling or has debris under it, please remove it."
+              ],
+              "actionableDeeplink": null,
+              "validationDeeplink": null
+            }
+          ],
+          "category": "manual"
+        },
+        {
+          "actionName": "Enable Touch Sensitivity",
+          "description": "It will adjust screen sensitivity",
+          "stepGroups": [
+            {
+              "steps": [
+                "Go to Settings.",
+                "Tap Display.",
+                "Tap the switch next to Touch sensitivity."
+              ],
+              "actionableDeeplink": {
+                "deeplink": "bixby://masked/act/14eb42b895",
+                "description": "Enables touch sensitivity via device Settings on the device.",
+                "message": "Enable Touch sensitivity",
+                "originalType": "onURL"
+              },
+              "validationDeeplink": {
+                "deeplink": "bixby://masked/val/6451858b28",
+                "key": "Touch sensitivity",
+                "resultType": "boolean",
+                "condition": "equal",
+                "value": "True"
+              }
+            }
+          ],
+          "category": "auto"
+        },
+        {
+          "actionName": "Disable Touch Sensitivity",
+          "description": "It will reduce oversensitivity issues",
+          "stepGroups": [
+            {
+              "steps": [
+                "To turn off this feature, navigate to Settings, tap Display, and then tap the switch next to Touch sensitivity to disable it."
+              ],
+              "actionableDeeplink": {
+                "deeplink": "bixby://masked/act/1b0d34e9b4",
+                "description": "Disables touch sensitivity via device Settings on the device.",
+                "message": "Disable Touch sensitivity",
+                "originalType": "offURL"
+              },
+              "validationDeeplink": {
+                "deeplink": "bixby://masked/val/6451858b28",
+                "key": "Touch sensitivity"
+              }
+            }
+          ],
+          "category": "auto"
+        },
+        {
+          "actionName": "Restart Device Normally",
+          "description": "It will clear minor software glitches",
+          "stepGroups": [
+            {
+              "steps": [
+                "For devices with a Power button: Press and hold the Power button, then tap Restart.",
+                "Tap Restart again to confirm."
+              ],
+              "actionableDeeplink": null,
+              "validationDeeplink": null
+            }
+          ],
+          "category": "critical"
+        },
+        {
+          "actionName": "Force Restart Unresponsive Device",
+          "description": "It will reboot the system",
+          "stepGroups": [
+            {
+              "steps": [
+                "Once the device turns off, press the Power button or Side button again to turn it back on."
+              ],
+              "actionableDeeplink": null,
+              "validationDeeplink": null
+            }
+          ],
+          "category": "critical"
+        }
+      ],
+      "score": 0.87
+    }
+  ],
+  "meta": {
+    "latency_ms": 5051.7,
+    "cache_hit": false,
+    "cache_tier": null,
+    "model": "ministral-14b-latest",
+    "cost_usd": 0.0,
+    "trace_id": "t_35e65804d4",
+    "fallback": null,
+    "source": null
+  }
+}
