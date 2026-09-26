@@ -25,6 +25,7 @@ const DEEPLINK_FIELD = /\.(?:actionableDeeplink|validationDeeplink)\.deeplink$/;
 const words = (s: string) => s.split(/\s+/).filter(Boolean);
 
 export interface CatalogEntry {
+  id?: string;
   deeplink: string;
   description?: string;
   message?: string;

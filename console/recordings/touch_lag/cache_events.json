@@ -1,0 +1,87 @@
+{
+  "exact": {
+    "event": {
+      "stage": "cache",
+      "ms": 7.1,
+      "summary": "Exact hit from the cache",
+      "detail": {
+        "hit": true,
+        "tier": "exact",
+        "similarity": 1.0,
+        "threshold": 0.7,
+        "norm_query": "my galaxy s22 screen inputs are delayed and the touch responsiveness is laggy, causing a noticeable delay when i try to interact with the phone.",
+        "slots": {
+          "component": "screen",
+          "symptom": "slow",
+          "intent": "fault"
+        },
+        "key": "33778410d41a120c",
+        "siis_hash": "aa71c2c2cb988681",
+        "siis_title": "Touchscreen issues on a Galaxy phone or tablet",
+        "query": "My Galaxy S22 screen inputs are delayed and the touch responsiveness is laggy, causing a noticeable delay when I try to interact with the phone.",
+        "matched_query": "My Galaxy S22 screen inputs are delayed and the touch responsiveness is laggy, causing a noticeable delay when I try to interact with the phone.",
+        "siis_hash_match": true,
+        "slots_match": true,
+        "validate": {
+          "url_leaks": 0,
+          "schema_valid": true,
+          "repairs": 0,
+          "dropped_actions": 0
+        }
+      }
+    },
+    "meta": {
+      "latency_ms": 7.3,
+      "cache_hit": true,
+      "cache_tier": "exact",
+      "model": null,
+      "cost_usd": 0.0,
+      "trace_id": "t_88e1fad0e4",
+      "fallback": null,
+      "source": null
+    }
+  },
+  "semantic": {
+    "event": {
+      "stage": "cache",
+      "ms": 31.0,
+      "summary": "Semantic hit from the cache",
+      "detail": {
+        "hit": true,
+        "tier": "semantic",
+        "similarity": 0.982,
+        "threshold": 0.7,
+        "norm_query": "screen input on my galaxy s22 is delayed and touch responsiveness is sluggish, producing a noticeable lag whenever i interact with the phone.",
+        "slots": {
+          "component": "screen",
+          "symptom": "slow",
+          "intent": "fault"
+        },
+        "key": "33778410d41a120c",
+        "siis_hash": "aa71c2c2cb988681",
+        "siis_title": "Touchscreen issues on a Galaxy phone or tablet",
+        "query": "Screen input on my Galaxy S22 is delayed and touch responsiveness is sluggish, producing a noticeable lag whenever I interact with the phone.",
+        "matched_query": "My Galaxy S22 screen inputs are delayed and the touch responsiveness is laggy, causing a noticeable delay when I try to interact with the phone.",
+        "siis_hash_match": true,
+        "slots_match": true,
+        "validate": {
+          "url_leaks": 0,
+          "schema_valid": true,
+          "repairs": 0,
+          "dropped_actions": 0
+        }
+      }
+    },
+    "meta": {
+      "latency_ms": 31.1,
+      "cache_hit": true,
+      "cache_tier": "semantic",
+      "model": null,
+      "cost_usd": 0.0,
+      "trace_id": "t_4d2b46432d",
+      "fallback": null,
+      "source": null
+    },
+    "paraphrase_id": "para_21_01"
+  }
+}

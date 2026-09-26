@@ -78,6 +78,8 @@ function readLlmConfig(): LlmConfig {
     temperature: num("llm_temperature_mistral", 0),
     fallback: str("fallback_model", "gemini-3-flash-preview"),
     fallbackTemperature: num("llm_temperature_gemini", 1),
+    preferDeadline: num("extract_prefer_deadline_s", 5),
+    budget: num("extract_budget_s", 6.3),
   };
 }
 
@@ -207,8 +209,18 @@ function fixture(dir: string): Fixture {
   };
 }
 
+/** A run recorded from the real engine by eval/tools/record_story.py, under console/recordings/. */
+function recording(dir: string): Fixture {
+  const base = `console/recordings/${dir}`;
+  return {
+    request: json(`${base}/request.json`)!,
+    plan: json(`${base}/plan.json`)!,
+    stream: json(`${base}/stream.json`)!,
+  };
+}
+
 function readMultiIntent(): MultiIntent {
-  const f = fixture("touch_multi_intent");
+  const f = recording("touch_multi_intent");
   const titles = f.plan.contexts.map((c) => c.title);
   const compile = f.stream.find((e) => e.stage === "compile")?.detail ?? {};
   const deduped = (compile.deduped as { action: string; kept_in_intent: number; removed_from_intents: number[] }[]) ?? [];
@@ -229,7 +241,7 @@ function readMultiIntent(): MultiIntent {
  */
 function readPresets(): Preset[] {
   const touch = fixture("touch_lag").request;
-  const multi = fixture("touch_multi_intent").request;
+  const multi = recording("touch_multi_intent").request;
   const email = fixture("email_not_responding").request;
   const titleOf = (siis: unknown) =>
     siis && typeof siis === "object" && "title" in siis ? String((siis as { title: string }).title) : "no article";

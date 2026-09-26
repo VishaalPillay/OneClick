@@ -20,22 +20,62 @@ The live section calls `POST /v1/troubleshoot/stream` at `NEXT_PUBLIC_API_URL` (
 `http://127.0.0.1:8000`, not `localhost`: uvicorn binds IPv4 only and browsers may try IPv6 first).
 If the API is switched to its mock replay (`settings.stream_mock`, off by default), every frame
 carries `detail.mock` and the section shows a "Mock replay" badge instead of passing a replay off as live.
-Its presets are real requests from `data/fixtures/` and `eval/sets/`.
+Its presets are real requests from `data/fixtures/`, `console/recordings/` and `eval/sets/`.
 
 ```bash
 cd api && uvicorn app.main:app      # in one terminal
 cd console && npm run dev           # in another
 ```
 
+Or both at once, as built images: `docker compose up --build` from the repo root (below).
+
+The section polls `GET /health` from the moment the page loads until the engine answers, so the
+badge reads *Engine ready*, *Engine waking up* (503 while the API loads its indexes, or a hosted API
+coming out of sleep) or *Engine offline* before anyone clicks.
+
+## Running it with the API
+
+`docker compose up --build` from the repo root builds [Dockerfile](Dockerfile) next to the API and
+serves the site on port 3000 (`ONECLICK_CONSOLE_PORT` to change it). The build context is the repo
+root because the page is prerendered from files outside `console/`: the fixtures' requests, the prompt files,
+`api/app/config.py`, the catalog, the gold labels, `eval/sets/` and `docs/metrics.md`. The root
+`.dockerignore` excludes `docs/` and `eval/` except for those two; add an exception there if the page
+starts reading another file. `output: "standalone"` gives the image a self-contained server, and
+because `turbopack.root` is the repo it lands at `.next/standalone/console/server.js`.
+
+`NEXT_PUBLIC_API_URL` is compiled into the page, and the viewer's **browser** calls it, not the
+container. So the compose default (`http://127.0.0.1:8000`) is right for anyone running the stack
+on their own machine; to serve the site against an API elsewhere, build with
+`ONECLICK_PUBLIC_API_URL=https://… docker compose build console`.
+
+## Deploying the site on Vercel
+
+The site is fully static, so Vercel serves it as it is. In the project settings:
+
+- **Root Directory** `console`, with *Include files outside the root directory* on (the build reads
+  the repo, see above).
+- **Environment variable** `NEXT_PUBLIC_API_URL` = the API's public **https** address. A page served
+  over https cannot call an `http://` API (mixed content), so it must be https, and it must be set
+  before the build: changing it later needs a redeploy.
+
+The API itself does not belong on Vercel: it keeps its cache in memory and in SQLite (every instance
+would start cold and repeat queries would stop hitting), it answers a request and then finishes the
+background variations call, and with the embedding model it needs about 440 MB of memory. It wants
+one long-lived container: run `api/Dockerfile` on a container host.
+
 ## How it is wired today
 
-The walkthrough sections replay a captured run rather than a live one. They import [data/fixtures/touch_lag/](../data/fixtures/README.md) directly through the
-`@fixtures/*` alias rather than keeping a copy, so what renders here is the same file
-[api/tests/test_fixtures.py](../api/tests/test_fixtures.py) guards. Change a fixture and the
-console changes with it.
+The walkthrough sections replay one real run of the engine, not a hand-made one: `console/recordings/`
+holds the touch-lag complaint's cold run (every stage frame, plus the background variations call),
+the same words again (exact hit), a held-out paraphrase (semantic hit) and a two-problem complaint.
+`python eval/tools/record_story.py` writes them from the shipping pipeline with the real keys, on a
+throwaway cache; rebuild the site afterwards. `about.json` next to each run says when, at which
+commit, with which model, and how many cold tries it took to get the primary model's answer (the
+free tier sometimes answers with the fast model or not at all).
 
-That import lives above the app folder, which Turbopack will not resolve by default, so
-`next.config.ts` widens `turbopack.root` to the repo. Keep that if you move things around.
+`data/fixtures/` is a different thing: the engine tests' hand-built contract, whose README marks its
+timings and scores as illustrative. The page no longer reads it, except for the live presets'
+request bodies.
 
 ## The story page
 
@@ -43,9 +83,8 @@ That import lives above the app folder, which Turbopack will not resolve by defa
 `api/app/llm/prompts/` (the highest `*.vN.md` of each) and the eval sets, then hands plain JSON to
 `components/story/Story.tsx`. So the prompt panel always shows exactly what the engine sends; while
 a prompt file is still a `TODO` stub the panel says "not written yet" rather than inventing text.
-Every other number comes from the fixtures (`lib/story.ts`) or is counted from the eval sets
-(`lib/story.server.ts`). The fixture README marks timings, token counts, scores and the dropped step
-as illustrative, and the page says so wherever they appear.
+Every other number comes from the recorded run (`lib/story.ts`) or is counted from the eval sets
+and read from `docs/metrics.md` (`lib/story.server.ts`).
 
 Motion is GSAP: ScrollSmoother for the scroll, ScrollTrigger pins for the model, grounding and phone
 sections, SplitText for the hero. Three traps cost time here, so avoid them:
@@ -68,7 +107,7 @@ sections, SplitText for the hero. Three traps cost time here, so avoid them:
 | `lib/checks.ts` | The graded output rules, a TypeScript mirror of `eval/evalkit/checks.py`. Keep them in step. |
 | `lib/stream.ts` | The SSE client for the live section. |
 | `app/story.css` | The story page's palette, type and every section's layout. |
-| `lib/story.ts`, `lib/story.server.ts` | Story data: derived from the fixtures, plus build-time reads of the prompt files and eval sets. |
+| `lib/story.ts`, `lib/story.server.ts` | Story data: derived from `recordings/`, plus build-time reads of the prompt files, config.py, the eval sets and metrics.md. |
 | `lib/gsap.ts` | GSAP with its plugins registered once, and the two breakpoints every section animates for. |
 | `components/story/` | One component per story section, plus `Galaxy` (a CSS handset) and its One UI `Screens`. |
 

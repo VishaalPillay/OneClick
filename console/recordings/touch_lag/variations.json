@@ -1,0 +1,92 @@
+{
+  "kept": [
+    "I’m having trouble with my Galaxy S22—every tap feels delayed like there’s a lag between my finger and the screen’s response.",
+    "My S22 screen is so slow it’s driving me nuts. Every time I try to press something, it takes forever to register.",
+    "Galaxy S22 touchscreen is acting weird—like it’s stuck in slow motion. Can’t even open apps without waiting.",
+    "My phone’s touch is all messed up. I press the screen, but nothing happens for ages. Super annoying!",
+    "Screen on my S22 is laggin’ like crazy. Every click feels delayed, and it’s making basic tasks impossible.",
+    "Galaxy S22 touch not working properly. There’s a noticeable delay when I try to tap anything—it’s frustrating.",
+    "Scrn on my S22 is laggy as heck. I hit the screen, but it takes forever to do anything. What’s going on?",
+    "Galaxy S22 touch delay issue—every time I try to interact, there’s a huge lag. Can’t even type this message fast.",
+    "Galaxy S22 screen is so laggy I can’t even use it properly. Every input feels delayed, and it’s not fun.",
+    "s22 screen inputs delayed responsiveness"
+  ],
+  "dropped": [
+    {
+      "text": "My S22’s touchscreen is so unresponsive it’s like it’s not even listening. Every input feels like it’s stuck.",
+      "reason": "changes_the_problem",
+      "jaccard": 0.08
+    },
+    {
+      "text": "My phone’s screen is acting weird. I press it, but it’s like it’s not responding right away—super slow.",
+      "reason": "changes_the_problem",
+      "jaccard": 0.14
+    },
+    {
+      "text": "S22 touchscreen is broken. Every tap has a delay, and it’s making everything take forever. Needs fixing.",
+      "reason": "changes_the_problem",
+      "jaccard": 0.14
+    },
+    {
+      "text": "screen slow fix",
+      "reason": "over_limit",
+      "jaccard": 0.04
+    },
+    {
+      "text": "Why is my screen slow?",
+      "reason": "over_limit",
+      "jaccard": 0.12
+    },
+    {
+      "text": "How can I repair a slow screen on my Galaxy?",
+      "reason": "over_limit",
+      "jaccard": 0.17
+    },
+    {
+      "text": "Help, my screen keeps being slow!",
+      "reason": "over_limit",
+      "jaccard": 0.07
+    },
+    {
+      "text": "Samsung screen problem: s22, screen",
+      "reason": "over_limit",
+      "jaccard": 0.08
+    },
+    {
+      "text": "I am experiencing an issue where the device screen is slow.",
+      "reason": "over_limit",
+      "jaccard": 0.13
+    },
+    {
+      "text": "ugh screen slow again, so annoying",
+      "reason": "over_limit",
+      "jaccard": 0.03
+    },
+    {
+      "text": "s22 screne screne not wroking",
+      "reason": "over_limit",
+      "jaccard": 0.04
+    },
+    {
+      "text": "What causes s22 and inputs on a Galaxy?",
+      "reason": "over_limit",
+      "jaccard": 0.19
+    },
+    {
+      "text": "Troubleshooting a slow screen",
+      "reason": "over_limit",
+      "jaccard": 0.08
+    },
+    {
+      "text": "screen slow after update, what should I do",
+      "reason": "over_limit",
+      "jaccard": 0.07
+    }
+  ],
+  "candidates": 12,
+  "model": "ministral-14b-latest",
+  "tokens_in": 208,
+  "tokens_out": 364,
+  "cost_usd": 0.0,
+  "prompt": "variations.v1"
+}

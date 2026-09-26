@@ -53,8 +53,8 @@ export function Finale() {
       <footer className="fin-foot">
         <span>OneClick · Samsung PRISM GenAI Hackathon 2026 · Theme 2</span>
         <span>
-          The walkthrough replays one recorded run of the pipeline. Its timings, token counts and scores are
-          illustrative until the live engine replaces them.
+          The walkthrough replays one run of the engine, recorded with eval/tools/record_story.py: its
+          timings, token counts and scores are that run&apos;s own. Try it live runs the engine itself.
         </span>
       </footer>
     </section>

@@ -1,0 +1,11 @@
+{
+  "recorded_at": "2026-09-26T16:58:30+00:00",
+  "commit": "7e0c89f",
+  "prompt_version": "enrich-v1+extract-v3+variations-v1",
+  "extract_model": "ministral-14b-latest",
+  "extract_fast_model": "ministral-8b-latest",
+  "variations_model": "ministral-14b-latest",
+  "how": "eval/tools/record_story.py: the shipping pipeline in-process, throwaway cache, real keys",
+  "cold_tries": 6,
+  "query": "my galaxy s22 screen inputs are delayed and the touch responsiveness is laggy, causing a noticeable delay when i try to interact with the phone."
+}

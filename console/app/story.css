@@ -1201,6 +1201,15 @@ body:has(.st) {
 .win-file-b {
   opacity: 0;
 }
+.win-models {
+  display: inline-grid;
+}
+.win-models > .win-model {
+  grid-area: 1 / 1;
+}
+.win-model-b {
+  opacity: 0;
+}
 .win-live {
   flex: 1;
   display: flex;
@@ -1681,6 +1690,29 @@ body:has(.st) {
 .gr-rogue-text {
   --strike: 0;
   text-decoration: line-through 3px rgba(224, 38, 26, var(--strike));
+}
+/* No step was thrown out: the card shows the closest call, in the proven green, not the refusal red. */
+.gr-rogue[data-clean="true"][data-state="on"] {
+  box-shadow:
+    inset 0 0 0 2.5px #1a6b2a,
+    0 24px 40px -20px rgba(26, 107, 42, 0.45);
+}
+.gr-rogue[data-clean="true"] .gr-cite,
+.gr-rogue[data-clean="true"] .gr-meter-fill {
+  background: #1a6b2a;
+}
+.gr-rogue[data-clean="true"] .gr-verdict-row b {
+  color: #1a6b2a;
+}
+.gr-stage:has(.gr-rogue[data-clean="true"]) .gr-path-rogue {
+  stroke: #1a6b2a;
+}
+.gr-out[data-clean="true"] {
+  color: #1a6b2a;
+}
+.gr-rogue[data-clean="true"] .gr-stamp {
+  border-color: #1a6b2a;
+  color: #1a6b2a;
 }
 .gr-verdict {
   margin-top: 10px;
@@ -3249,7 +3281,8 @@ body:has(.st) {
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.5);
 }
-.lv-badge.live i {
+.lv-badge.live i,
+.lv-badge.ready i {
   background: var(--lime);
 }
 .lv-badge.mock i {
@@ -3450,10 +3483,12 @@ body:has(.st) {
   .st .ra {
     display: none;
   }
-  .st .win-file-a {
+  .st .win-file-a,
+  .st .win-model-a {
     display: none;
   }
-  .st .win-file-b {
+  .st .win-file-b,
+  .st .win-model-b {
     opacity: 1;
   }
   .st .win-body {
@@ -3488,13 +3523,16 @@ body:has(.st) {
     max-width: none;
     height: auto;
   }
+  /* In flow under the card, rising only into the card's empty bottom padding (60vw): absolutely
+     placed, the ~116vw-tall phone climbed back over the copy and the button. */
   .hero-phone {
-    left: 50%;
+    position: relative;
+    left: auto;
     right: auto;
     top: auto;
-    bottom: -30vw;
+    bottom: auto;
     width: 56vw;
-    margin-left: -28vw;
+    margin: -52vw auto 0;
   }
   .cmp-steps,
   .rs-tiers,
@@ -3583,5 +3621,38 @@ body:has(.st) {
   }
   .fin-foot span:last-child {
     text-align: left;
+  }
+}
+
+/* Phones: the bar has to hold the lockup and the pill on one line. */
+@media (max-width: 560px) {
+  .nav {
+    gap: 12px;
+    padding-top: 16px;
+    padding-bottom: 16px;
+  }
+  .nav-brand {
+    gap: 8px;
+    font-size: 19px;
+  }
+  .nav-samsung {
+    height: 17px;
+  }
+  .nav-div {
+    height: 20px;
+  }
+  .nav-cta {
+    height: 38px;
+    padding: 0 15px;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  /* A wider-than-tall arch at 390px is ~360px across; the headline needs more room than that. */
+  .fin-arch {
+    width: 100vw;
+    aspect-ratio: 1 / 1.1;
+  }
+  .fin-title {
+    font-size: 11.5vw;
   }
 }

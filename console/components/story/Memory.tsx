@@ -17,7 +17,7 @@ export function Memory({ data }: { data: StoryData }) {
   ];
 
   const rows = [
-    { key: "cold", label: "First time", sub: "cold · two model calls", ms: timing.total },
+    { key: "cold", label: "First time", sub: "cold · one model call", ms: timing.total },
     { key: "semantic", label: "Reworded", sub: "semantic hit", ms: timing.semantic },
     { key: "exact", label: "Same words", sub: "exact hit", ms: timing.exact },
   ];
@@ -126,13 +126,13 @@ export function Memory({ data }: { data: StoryData }) {
             <span>
               <i /> everything else
             </span>
-            <span className="st-fine">Timings and similarity from the recorded demo run</span>
+            <span className="st-fine">Timings and similarity from one recorded run</span>
           </div>
         </div>
 
         <div className="mm-big">
           <b>{speedup}×</b>
-          <span>faster on a reworded question. A hit skips both model calls, and the pink is gone.</span>
+          <span>faster on a reworded question. A hit skips the model call entirely, and the pink is gone.</span>
         </div>
 
         <div className="mm-cards">
