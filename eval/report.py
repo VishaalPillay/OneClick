@@ -44,6 +44,19 @@ CATALOG_GAPS = (
     "Factory data reset have no catalog entry, so those steps resolve to `bixby://dummy_positive` "
     "or stay manual. `DL-0022` is the *auto* factory reset, not Factory data reset."
 )
+# Observations about the kit and the engine that no single run file records.
+KIT_MISMATCH = (
+    "Some kit rows pair a complaint with an article about another problem: row 7 (a dark screen, the "
+    "Multi window article), row 10 (blanking at the hinge, camera flicker under lights), row 20 (a "
+    'distorted screen, screen rotation) and rows 3, 11 and 17 (a garbled "things to check first" page '
+    "with its words run together). The engine may only use the article, so it answers with the "
+    "article's nearest fixes, and the judge marks those plans irrelevant or incomplete."
+)
+MULTI_INTENT_CACHE = (
+    "The cache's slot check looks at what broke, not at how many problems a complaint names, so a two-problem "
+    "complaint on an article already solved for one of them can be served that one-problem plan from "
+    "the semantic cache."
+)
 
 
 def load(name: str, results_dir: Path) -> dict | None:
@@ -412,6 +425,25 @@ def section6(ablation: dict | None, load: dict | None, gates: dict | None, judge
                 + ", ".join(f"{k} {v * 100:.0f}%" for k, v in weak.items())
                 + " hit rate with the cache warmed on the original phrasing only."
             )
+    items.append(f"**Mismatched kit pairs.** {KIT_MISMATCH}")
+    cold = cache.get("cold") or {}
+    if cold.get("models"):
+        answered = ", ".join(f"{m} {n}" for m, n in sorted(cold["models"].items(), key=lambda kv: -kv[1]))
+        items.append(
+            f"**Free-tier variance.** Cold answers in the load test came from {answered}. Which model "
+            "answers depends on the free tier's load (a 429 puts a model on a 60 s cooldown, and past the "
+            "prefer deadline the faster model's answer is taken), so the same complaint can get a "
+            "different plan on another run; the cache then serves the first one identically."
+        )
+    if judge:
+        items.append(
+            f"**Completeness.** Plans hold at most `extract_max_actions` (8) actions per goal so a cold "
+            f"answer stays inside the 8 s budget on the free tier; the judge's most common complaint is a "
+            f"missing article fix ({judge.get('plans_missing_a_fix')} of {judge.get('n')} plans). "
+            f"Critical actions come last as the spec requires, after contacting support; "
+            f"{judge.get('order_problems')} plans were still marked with an ordering problem."
+        )
+    items.append(f"**Multi-intent and the cache.** {MULTI_INTENT_CACHE}")
     pending = []
     if not judge:
         pending.append("step accuracy (`judge.py`)")

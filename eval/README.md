@@ -97,7 +97,7 @@ Deeplink relevance (0–2) follows `evalkit/relevance.py`: 2 for the exact entry
 
 **`loadtest.py --mode cache`** warms the real cache with the 20 kit queries (original phrasing only, so the paraphrase hit rate is a lower bound), then times ≥ 30 lookups per path and counts false hits on the near-miss set. `--sweep` repeats it across similarity thresholds.
 
-**`judge.py`** asks an LLM to grade each plan against its complaint and article: a verdict per step (`correct` / `partial` / `wrong`, with the main issue: `not_an_instruction`, `fragment`, `irrelevant`, `unsupported`, `duplicate`, `wrong_action`), 0–2 per catalog link, the article fixes the plan leaves out, whether the order works, and a 0–3 score for completeness, correctness and ordering. The rubric is `prompts/judge.v1.md`. The step issues are the part to read when tuning the extraction prompt.
+**`judge.py`** asks an LLM to grade each plan against its complaint and article: a verdict per step (`correct` / `partial` / `wrong`, with the main issue: `not_an_instruction`, `fragment`, `irrelevant`, `unsupported`, `duplicate`, `wrong_action`), 0–2 per catalog link, the article fixes the plan leaves out, whether the order works, and a 0–3 score for completeness, correctness and ordering. The rubric is `prompts/judge.v2.md`: v1 plus the organisers' ordering rule (critical actions after every other action, contacting support included), which v1 marked as a problem on plans the spec requires it of. The step issues are the part to read when tuning the extraction prompt.
 
 ```bash
 python eval/judge.py --dry-run                     # print the first prompt; no key needed
@@ -136,7 +136,7 @@ The `gates.json` report is uploaded as an artifact.
 | `ablation.py` | The mapping ablation (metrics.md sections 2 and 5) |
 | `loadtest.py` | Latency at N ≥ 30 per path, cache hit and false-hit rates (sections 3 and 4) |
 | `report.py` | Writes `docs/metrics.md` in the Appendix C layout |
-| `judge.py`, `prompts/judge.v1.md` | LLM judge: step accuracy 0–3, per-step issues, end-to-end link relevance 0–2 (section 2) |
+| `judge.py`, `prompts/judge.v2.md` | LLM judge: step accuracy 0–3, per-step issues, end-to-end link relevance 0–2 (section 2) |
 | `sets/` | Paraphrase, near-miss, unseen and adversarial sets (see `sets/README.md`) |
 | `sets/validate_sets.py` | Validates the four sets and `data/gold/deeplink_gold.jsonl`; runs in CI |
 | `tools/label_gold.py` | Interactive labelling helper for the gold set (see `data/gold/README.md`) |
