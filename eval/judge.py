@@ -52,8 +52,10 @@ use_api_package()
 from app.compiler.scrub import scrub
 from app.pipeline.normalize import clean_siis, siis_title
 
-PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "judge.v1.md"
-PROMPT_VERSION = "judge-v1"
+# v2 adds the organisers' ordering rule (critical actions last, after contacting support); v1 marked
+# that order as a problem on plans the spec requires it of.
+PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "judge.v2.md"
+PROMPT_VERSION = "judge-v2"
 OUT_PATH = RESULTS_DIR / "judge.json"
 CACHE_PATH = RESULTS_DIR / "judge_cache.json"
 DUMMY_URI = "bixby://dummy_positive"
