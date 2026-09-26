@@ -1,5 +1,7 @@
 """Component 10: enforce title 2-3 words and description 'It will' + 5-7 words total."""
 
+import re
+
 from app.config import settings
 
 _PUNCT_EDGES = ".,;:!?\"'()[]"
@@ -20,7 +22,10 @@ _DESC_DEFAULT = "It will help resolve this issue"
 
 def _is_proper(word: str) -> bool:
     bare = word.strip(_PUNCT_EDGES)
-    return bare.lower() in _PROPER or any(c.isdigit() for c in bare) or bare[1:] != bare[1:].lower()
+    # An inner capital marks a name ("iPhone", "OneClick"); one only after a hyphen does not
+    # ("Non-Responsive" is Title Case, not a name). Listed names ("Wi-Fi") stay either way.
+    inner = re.sub(r"-([A-Z])", lambda m: "-" + m.group(1).lower(), bare)[1:]
+    return bare.lower() in _PROPER or any(c.isdigit() for c in bare) or inner != inner.lower()
 
 
 def _sentence_case(words: list[str]) -> list[str]:

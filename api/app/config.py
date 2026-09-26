@@ -25,7 +25,9 @@ class Settings(BaseModel):
     extract_model: str = "ministral-14b-latest"
     extract_fast_model: str = "ministral-8b-latest"  # raced with extract_model; "" disables the race
     extract_thinking: str = "low"  # Gemini models only
-    extract_prefer_deadline_s: float = 6.0  # the quality answer wins if it is back by then
+    # The quality answer wins if it is back by then. 5.0 since extract v3: 14B answered every kit
+    # article within 5.3 s (median 2.3 s), so waiting to 6.0 only held 8B's answer back.
+    extract_prefer_deadline_s: float = 5.0
     # Call A (enrich). Free tier: intents come from call B and the 8-10 variations from a small model
     # that runs alongside extraction, so no LLM sits on the critical path before extraction.
     enrich_llm_on_critical_path: bool = False
@@ -42,10 +44,14 @@ class Settings(BaseModel):
     llm_temperature_gemini: float = 1.0
     llm_temperature_mistral: float = 0.0
     # Cache-key tag (with prompt_versions below): change it whenever a prompt changes.
-    prompt_version: str = "enrich-v1+extract-v2+variations-v1"
+    prompt_version: str = "enrich-v1+extract-v3+variations-v1"
     prompt_versions: dict[str, str] = {
         "enrich": "v1",
-        "extract": "v2",  # select mode
+        # select mode. v3 (2026-09-26) asks for compact JSON and the exact setting in screen_path. On
+        # the 11 kit articles 14B's slowest answer fell from 8.5 s to 5.3 s (v2's indented JSON spent
+        # a third of its tokens on whitespace, and pushed the 56-sentence article past the 6.5 s
+        # timeout on every run), and 8B stopped answering with runs of blank space (bad_json).
+        "extract": "v3",
         "extract_rewrite": "v1",  # rewrite mode
         "variations": "v1",
     }
@@ -62,14 +68,29 @@ class Settings(BaseModel):
     # the budget so the fallback still has time to answer.
     enrich_primary_timeout_s: float = 1.5
     enrich_budget_s: float = 2.5
-    extract_primary_timeout_s: float = 6.5
-    extract_budget_s: float = 7.0
+    # Cold p95 must stay under 8 s (spec) with every other stage on top (~0.5-1.2 s, more for a long
+    # article). 7.0 put a fuller touch-lag plan at 8.26 s in the gate replica; past 6.0 s the fast
+    # model's answer (typically ~3.5 s) is used instead.
+    extract_primary_timeout_s: float = 6.0
+    extract_budget_s: float = 6.3
     llm_timeout_default_s: float = 3.0  # a client called without a stage timeout
     llm_min_fallback_s: float = 0.5  # less than this left in a stage budget: skip the fallback model
     variations_workers: int = 4  # background variations calls running at once
     max_intents: int = 3  # intents (and so Goals) per query, from call A or call B
     enrich_max_tokens: int = 1024
-    extract_max_tokens: int = 1500  # select mode needs ~300-600; rewrite mode wants ~4096
+    extract_max_tokens: int = 1500  # select mode needs ~100-400; rewrite mode wants ~4096
+    # Actions per goal in select mode (schema maxItems + the prompt). Asked to cover every fix, the
+    # touch-lag article drew 9-11 actions (~500 output tokens, 8B 4.4-6.2 s), and one cold run in four
+    # missed the stage budget. Samsung's own sample plan has two.
+    extract_max_actions: int = 8
+    # The extract prompt says to return no goals when the article does not address the complaint. An
+    # empty answer is trusted only when this many models gave one and none chose anything: 14B has
+    # answered empty once for an article that did fit, while 8B answered it fully.
+    extract_empty_votes: int = 2
+    # Rules-only extraction (no model answered) takes the article's own instructions, so it must not
+    # run on an article about something else. Best section relevance on the kit: 0.59-0.80; a washing
+    # machine article sent with a phone complaint: 0.52.
+    rules_min_relevance: float = 0.55
     variations_max_tokens: int = 600
 
     # Segmenting and grounding (components 4, 6)
@@ -77,6 +98,9 @@ class Settings(BaseModel):
     section_embed_chars: int = 400  # heading + this much body is embedded for section relevance
     grounding_min_shared_terms: int = 1
     rules_only_score_cap: float = 0.5  # extraction fell back to rules: score says so
+    # A rules-only answer given while a model is configured (the free tier was busy) is cached like any
+    # other, so repeats stay identical, but only this long: after it the question gets a cold run again.
+    degraded_cache_ttl_s: float = 600.0
 
     # Compiler (component 10)
     description_min_words: int = 5  # counting "It will"

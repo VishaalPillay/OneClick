@@ -240,13 +240,13 @@ def test_parse_json_tolerates_fences_and_rejects_non_objects():
             parse_json(bad)
 
 
-@pytest.mark.parametrize("mode, extract_version", [("select", "v2"), ("rewrite", "v1")])
+@pytest.mark.parametrize("mode, extract_version", [("select", "v3"), ("rewrite", "v1")])
 def test_prompts_render_every_placeholder(monkeypatch, mode, extract_version):
     monkeypatch.setattr(settings, "extract_mode", mode)
     assert router.prompt_version("extract") == extract_version  # each mode gets its own prompt
     for name, variables in (
         ("enrich", {"query": "q"}),
-        ("extract", {"query": "q", "intents": "i", "sentences": "s"}),
+        ("extract", {"query": "q", "intents": "i", "sentences": "s", "max_actions": 8}),
         ("variations", {"query": "q"}),
     ):
         text = router.render(router.load_prompt(name, router.prompt_version(name)), variables)
@@ -361,6 +361,68 @@ def test_llm_failure_degrades_to_rules_capped_and_repeats_identically(monkeypatc
     cache.clear()
 
 
+def _answers(*answers):
+    """A stand-in router: each answer goes through the caller's accept check, then the call fails the
+    way the real router fails when nothing was accepted."""
+
+    def complete_json(prompt_name, variables, schema, *, stage=None, info=None, clients=None, accept=None):
+        if prompt_name == "variations":
+            return {"variations": VARIATIONS}
+        for answer in answers:
+            if accept is None or accept(answer):
+                if info is not None:
+                    info.update(model="fake", tokens_in=1, tokens_out=1, cost_usd=0.0, attempts=[])
+                return answer
+        raise router.LLMError(
+            [{"model": f"m{i}", "ok": False, "error": "rejected", "ms": 1} for i in answers]
+        )
+
+    return complete_json
+
+
+def test_every_model_choosing_nothing_is_a_no_match_not_a_failure(monkeypatch, keys):
+    """The prompt says to return no goals when the article does not address the complaint. When every
+    model that answered agrees, that is the answer: no rules fallback copying the article's steps."""
+    monkeypatch.setattr(router, "complete_json", _answers({"goals": []}, {"goals": [{"actions": []}]}))
+    cache.clear()
+    events = {e.stage.value: e.detail for e in run_stream(REQUEST["query"], REQUEST["siis_response"])}
+    assert events["extract"]["no_match"] is True and events["extract"]["actions"] == []
+    assert events["done"]["contexts"] == [] and events["done"]["meta"]["fallback"] == "no_match"
+    cache.clear()
+
+
+def test_one_empty_answer_is_not_trusted(monkeypatch, keys):
+    """14B has answered an empty selection for an article that did fit. Alone it decides nothing: the
+    other model's selection wins, and with no other answer the engine degrades to rules as before."""
+    monkeypatch.setattr(router, "complete_json", _answers({"goals": []}, SELECT_ANSWER))
+    cache.clear()
+    events = {e.stage.value: e.detail for e in run_stream(REQUEST["query"], REQUEST["siis_response"])}
+    assert events["extract"]["source"] == "llm" and events["done"]["contexts"]
+    monkeypatch.setattr(router, "complete_json", _answers({"goals": []}))
+    cache.clear()
+    events = {e.stage.value: e.detail for e in run_stream(REQUEST["query"], REQUEST["siis_response"])}
+    assert events["extract"]["source"] == "rules" and events["done"]["contexts"]
+    cache.clear()
+
+
+def test_a_degraded_answer_is_retried_once_its_window_has_passed(monkeypatch, keys):
+    """Every model busy: the rules answer is cached (repeats stay identical), but only for
+    degraded_cache_ttl_s; after that the same question gets a cold run and a model answer."""
+
+    def down(*args, **kwargs):
+        raise router.LLMError([{"model": "x", "ok": False, "error": "http_503", "ms": 1}])
+
+    monkeypatch.setattr(router, "complete_json", down)
+    cache.clear()
+    first = {e.stage.value: e.detail for e in run_stream(REQUEST["query"], REQUEST["siis_response"])}
+    assert first["extract"]["source"] == "rules"
+    monkeypatch.setattr(settings, "degraded_cache_ttl_s", 0.0)
+    monkeypatch.setattr(router, "complete_json", _answers(SELECT_ANSWER))
+    again = {e.stage.value: e.detail for e in run_stream(REQUEST["query"], REQUEST["siis_response"])}
+    assert again["done"]["meta"]["cache_hit"] is False and again["extract"]["source"] == "llm"
+    cache.clear()
+
+
 def test_selection_keeps_only_real_sentences_and_splits_instructions():
     sentences = [
         SiisSentence(id="S1", section="s", text="Go to Settings, tap Display, and then tap Dark mode."),
@@ -381,6 +443,125 @@ def test_selection_keeps_only_real_sentences_and_splits_instructions():
     assert intents == [Intent(text="Screen too bright", title="Bright screen", domain="Other")]
     assert topics == ["Bright screen"]
     assert not extract_module.usable_selection(answer, {"S7"})
+
+
+def test_the_schema_only_allows_the_articles_own_sentence_ids():
+    schema = extract_module.select_schema(["S1", "S2"])
+    action = schema["properties"]["goals"]["items"]["properties"]["actions"]["items"]
+    assert action["properties"]["ids"]["items"] == {"type": "string", "enum": ["S1", "S2"]}
+    assert sorted(action["required"]) == ["desc", "ids", "name", "path", "verb"]
+    wire = {
+        "goals": [
+            {
+                "title": "t",
+                "actions": [{"ids": ["S1"], "name": "n", "desc": "d", "path": "p", "verb": "open"}],
+            }
+        ]
+    }
+    (action,) = extract_module._long_keys(wire)["goals"][0]["actions"]
+    assert action == {
+        "src_ids": ["S1"],
+        "name": "n",
+        "description": "d",
+        "screen_path": "p",
+        "intent_verb": "open",
+    }
+    shared = extract_module.SELECT_SCHEMA["properties"]["goals"]["items"]["properties"]["actions"]["items"]
+    assert shared["properties"]["src_ids"]["items"] == {"type": "string"}  # the shared schema is untouched
+
+
+def test_a_variation_that_changes_the_problem_is_kept_only_to_reach_eight():
+    query = "My Galaxy S22 screen turns completely blank or white when I search for a stock price."
+    drifting = "My Samsung Galaxy S22 screen freezes whenever I open the stock app."  # blank -> slow
+    faithful = [
+        "Galaxy S22 display goes white and empty during stock price searches.",
+        "S22 screen blank white stock lookup",
+        "Whenever I look up a share price my S22 display turns entirely white.",
+        "my s22 screne goes blnak when i serch stocks",
+        "Why does my Galaxy S22 screen go blank when I check stocks?",
+        "Checking a share price leaves my S22 with a blank screen.",
+        "The S22 display blanks out to white in the stock search.",
+        "Stock price search makes my Galaxy S22 screen go completely blank.",
+        "ugh, S22 screen is all white and empty whenever I check a stock",
+    ]
+    slots = enrich_module.extract_slots(enrich_module.normalize_query(query))
+    kept, dropped = enrich_module.filter_variations(query, [drifting, *faithful], slots)
+    assert (
+        drifting not in kept
+        and {"text": drifting, "reason": "changes_the_problem"}.items()
+        <= {**next(d for d in dropped if d["text"] == drifting)}.items()
+    )
+    kept, _ = enrich_module.filter_variations(query, [drifting, faithful[0]], slots)
+    assert drifting in kept  # too few otherwise: 8-10 variations is a hard rule
+
+
+def test_an_action_named_after_another_sentence_is_renamed_from_its_screen():
+    sentences = [
+        SiisSentence(id="S7", section="s", text="If your screen protector is peeling, please remove it."),
+        SiisSentence(
+            id="S9",
+            section="s",
+            text="Go to Settings, tap Display, and then tap the switch next to Touch sensitivity.",
+        ),
+        SiisSentence(
+            id="S20", section="s", text="Press and hold the Power button and the Volume down button."
+        ),
+    ]
+    goal = {"problem": "p", "title": "t t", "topic": "", "domain": "Display"}
+    wrong = {
+        "src_ids": ["S9"],
+        "name": "Remove Damaged Screen Protector",
+        "description": "",
+        "screen_path": "Settings > Display > Touch sensitivity",
+        "intent_verb": "enable",
+    }
+    physical = {
+        "src_ids": ["S20"],
+        "name": "Force Restart Device",
+        "description": "",
+        "screen_path": "",
+        "intent_verb": "restart",
+    }
+    right = {
+        "src_ids": ["S7"],
+        "name": "Remove Screen Protector",
+        "description": "",
+        "screen_path": "",
+        "intent_verb": "none",
+    }
+    actions, _, _ = extract_module.actions_from_selection(
+        {"goals": [{**goal, "actions": [wrong, physical, right]}]}, sentences
+    )
+    assert [a.name for a in actions] == [
+        "Enable Touch sensitivity",
+        "Force Restart Device",
+        "Remove Screen Protector",
+    ]
+
+
+def test_a_confirmation_step_never_stands_alone():
+    """The model sometimes picks only "Tap Restart again to confirm."; the sentence that starts the
+    restart comes with it, and only from the same section."""
+    sentences = [
+        SiisSentence(id="S1", section="Restart", text="Press and hold the Power button, then tap Restart."),
+        SiisSentence(id="S2", section="Restart", text="Tap Restart again to confirm."),
+        SiisSentence(id="S3", section="Other", text="Tap Done again."),
+    ]
+    action = {"name": "Restart", "description": "", "screen_path": "", "intent_verb": "restart"}
+    for chosen, expected in ((["S2"], ["S1", "S2"]), (["S1", "S2"], ["S1", "S2"]), (["S3"], ["S3"])):
+        answer = {
+            "goals": [
+                {
+                    "problem": "p",
+                    "title": "t t",
+                    "topic": "",
+                    "domain": "Other",
+                    "actions": [{**action, "src_ids": chosen}],
+                }
+            ]
+        }
+        actions, _, _ = extract_module.actions_from_selection(answer, sentences)
+        assert list(dict.fromkeys(i for s in actions[0].steps for i in s.src_ids)) == expected
 
 
 def test_enrich_llm_on_the_critical_path_still_works(monkeypatch, keys):

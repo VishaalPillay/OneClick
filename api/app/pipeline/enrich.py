@@ -16,6 +16,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 
 import numpy as np
 
+from app.cache.slot_guard import compatible
 from app.compiler.scrub import scrub
 from app.compiler.trimmer import trim_title
 from app.config import settings
@@ -59,8 +60,18 @@ def word_jaccard(a: str, b: str) -> float:
     return len(left & right) / len(left | right) if left | right else 1.0
 
 
-def filter_variations(query: str, candidates: list[str]) -> tuple[list[str], list[dict]]:
-    """(kept, dropped[{text, reason, jaccard}]) — the rule the fixtures and test_fixtures.py encode."""
+def filter_variations(
+    query: str, candidates: list[str], slots: Slots | None = None
+) -> tuple[list[str], list[dict]]:
+    """(kept, dropped[{text, reason, jaccard}]) — the rule the fixtures and test_fixtures.py encode.
+
+    With `slots` (the query's), a candidate whose own slots contradict them is set aside: "screen
+    flashes" reworded as "screen crashes" is a different problem, not a paraphrase. Measured on the
+    kit: 33 of 200 model-written variations did that, and as cache keys they can never serve their own
+    plan (the slot guard blocks them) while they can pull a no-article question toward another one.
+    They come back only when fewer than variation_min would survive otherwise: a configure request
+    ("I want to remove it") has fault-worded templates, and 8-10 variations is a hard rule.
+    """
     norm = normalize_query(query)
     seen: set[str] = set()
     pool = []
@@ -76,28 +87,41 @@ def filter_variations(query: str, candidates: list[str]) -> tuple[list[str], lis
     cosines = vectors[1:] @ vectors[0]
     kept: list[str] = []
     dropped: list[dict] = []
-    for text, cosine in zip(pool, cosines):
+
+    def consider(text: str, cosine: float, check_slots: bool) -> None:
         vs_original = word_jaccard(text, query)
         vs_kept = max((word_jaccard(text, k) for k in kept), default=0.0)
-        if vs_original >= settings.variation_jaccard_max:
+        if check_slots and slots is not None and not compatible(extract_slots(normalize_query(text)), slots):
+            dropped.append({"text": text, "reason": "changes_the_problem", "jaccard": round(vs_original, 2)})
+        elif vs_original >= settings.variation_jaccard_max:
             dropped.append(
                 {"text": text, "reason": "token_jaccard_vs_original", "jaccard": round(vs_original, 2)}
             )
         elif vs_kept >= settings.variation_jaccard_max:
             dropped.append({"text": text, "reason": "token_jaccard_vs_kept", "jaccard": round(vs_kept, 2)})
-        elif float(cosine) < settings.variation_meaning_min_cos:
+        elif cosine < settings.variation_meaning_min_cos:
             dropped.append(
                 {
                     "text": text,
                     "reason": "off_meaning",
                     "jaccard": round(vs_original, 2),
-                    "cosine": round(float(cosine), 2),
+                    "cosine": round(cosine, 2),
                 }
             )
         elif len(kept) >= settings.variation_max:
             dropped.append({"text": text, "reason": "over_limit", "jaccard": round(vs_original, 2)})
         else:
             kept.append(text)
+
+    by_text = dict(zip(pool, (float(c) for c in cosines)))
+    for text in pool:
+        consider(text, by_text[text], check_slots=True)
+    set_aside = [d["text"] for d in dropped if d["reason"] == "changes_the_problem"]
+    for text in set_aside:
+        if len(kept) >= settings.variation_min:
+            break
+        dropped = [d for d in dropped if d["text"] != text]
+        consider(text, by_text[text], check_slots=False)
     return kept, dropped
 
 
@@ -143,13 +167,16 @@ def template_variations(query: str, slots: Slots) -> list[str]:
     ]
 
 
-def enrich_rules(query: str, slots: Slots) -> tuple[list[Intent], list[str], dict]:
+def enrich_rules(query: str, slots: Slots, *, templates: bool = True) -> tuple[list[Intent], list[str], dict]:
+    """The provisional intent, and template variations unless `templates` is off: with the background
+    variations call running they are never used (finish_variations adds them itself if it needs them),
+    and filtering them embeds a dozen texts on the answer's path."""
     text = " ".join(scrub(query).split()) or query
     intent = Intent(
         text=text, domain=_DOMAINS.get(slots.component or "", "Other"), title=rules_title(slots, text)
     )
-    candidates = template_variations(text, slots)
-    kept, dropped = filter_variations(text, candidates)
+    candidates = template_variations(text, slots) if templates else []
+    kept, dropped = filter_variations(text, candidates) if candidates else ([], [])
     detail = {
         "canonical_query": text,
         "intents": [intent.model_dump(mode="json")],
@@ -212,7 +239,7 @@ def enrich_llm(query: str, slots: Slots) -> tuple[list[Intent], list[str], dict]
     llm_candidates = [str(v) for v in answer.get("variations") or [] if isinstance(v, str)]
     # Templates go after the model's candidates: they only fill the list up to 8 when too few survive.
     candidates = llm_candidates + template_variations(query, slots)
-    kept, dropped = filter_variations(query, candidates)
+    kept, dropped = filter_variations(query, candidates, slots)
     detail = {
         "canonical_query": " ".join(scrub(str(answer.get("canonical_query") or query)).split()),
         "intents": [i.model_dump(mode="json") for i in intents],
@@ -260,13 +287,15 @@ def finish_variations(query: str, slots: Slots, future: Future) -> tuple[list[st
         llm_candidates, info = future.result(timeout=0)
     except Exception as exc:  # noqa: BLE001 - LLMError or a bad answer: the templates stand in
         llm_candidates, info = [], {"degraded": f"{type(exc).__name__}: {str(exc)[:200]}"}
-    kept, dropped = filter_variations(query, llm_candidates + template_variations(query, slots))
+    kept, dropped = filter_variations(query, llm_candidates + template_variations(query, slots), slots)
     keys = ("model", "tokens_in", "tokens_out", "cost_usd", "attempts", "prompt", "degraded")
     return kept, dropped, {"candidates": len(llm_candidates)} | {k: info.get(k) for k in keys if k in info}
 
 
 # ---- entry points -----------------------------------------------------------------------------------
-def enrich_with_report(query: str, slots: Slots) -> tuple[list[Intent], list[str], dict]:
+def enrich_with_report(
+    query: str, slots: Slots, *, templates: bool = True
+) -> tuple[list[Intent], list[str], dict]:
     """(intents, 8-10 variations, the `enrich` stream detail). LLM first, templates when it fails.
 
     With enrich_llm_on_critical_path off this is the no-LLM path: a provisional intent from the query
@@ -282,7 +311,7 @@ def enrich_with_report(query: str, slots: Slots) -> tuple[list[Intent], list[str
             detail["degraded"] = f"{type(exc).__name__}: {str(exc)[:200]}"
             detail["attempts"] = getattr(exc, "attempts", [])
             return intents, kept, detail
-    return enrich_rules(query, slots)
+    return enrich_rules(query, slots, templates=templates)
 
 
 def enrich(norm_query: str) -> tuple[list[Intent], list[str]]:

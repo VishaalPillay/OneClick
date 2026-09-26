@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.cache import no_siis
 from app.obs import readiness
+from app.pipeline import segment
 from app.routes import device, metrics, stream, troubleshoot
 
 
@@ -18,6 +19,10 @@ async def lifespan(app: FastAPI):
         no_siis.prewarm()  # kit plans + kit articles for requests without an article (~2 s)
     except Exception:  # noqa: BLE001 - loads lazily on the first no-article request instead
         logging.getLogger("oneclick").warning("no-article pre-warm failed; it will load on first use")
+    try:
+        segment.prewarm_kit()  # kit article sections embedded: the first cold request is not slower
+    except Exception:  # noqa: BLE001 - the first requests are just slower
+        logging.getLogger("oneclick").warning("section pre-warm failed")
     yield
 
 

@@ -41,6 +41,15 @@ def content_terms(text: str) -> set[str]:
     return {w for w in tokens(text) if w not in STOPWORDS and w not in UI_VERBS and len(w) >= 3}
 
 
+def recognisable(query: str, context: str) -> bool:
+    """True when the query holds at least one word a reader would recognise: a common English word or
+    one the article also uses. Typos and other languages still share some ("my", "screen", "black");
+    "asdkjh qwe zzz 12345" shares none, and no answer to it would be anything but a guess."""
+    words = [w for w in tokens(query) if any(c.isalpha() for c in w)]
+    vocabulary = token_set(context)
+    return any(w in STOPWORDS or w in UI_VERBS or w in vocabulary for w in words)
+
+
 def jaccard(a: str, b: str) -> float:
     left, right = token_set(a), token_set(b)
     if not left and not right:

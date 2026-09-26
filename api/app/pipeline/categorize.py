@@ -18,7 +18,7 @@ CRITICAL_KINDS: tuple[tuple[str, re.Pattern], ...] = (
     (
         "restart",
         re.compile(
-            r"\b(?:force )?restart\b(?! (?:the |your )?(?:\w+ )?app\b)|\breboot|"
+            r"\b(?:force )?restart(?:ing|s|ed)?\b(?! (?:the |your )?(?:\w+ )?app\b)|\breboot|"
             r"\bturn (?:it|the (?:device|phone)|your (?:device|phone)) off and (?:back )?on",
             re.IGNORECASE,
         ),

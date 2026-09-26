@@ -44,6 +44,7 @@ from app.pipeline.normalize import clean_siis, display_query, normalize_query, s
 from app.pipeline.order import order
 from app.pipeline.segment import segment_with_sections
 from app.pipeline.slots import extract_slots
+from app.pipeline.text import recognisable
 from app.retrieval import search as retrieval_search
 from app.screengraph.resolver import resolve
 
@@ -275,10 +276,10 @@ def _cold(
     # enrich
     t = time.perf_counter()
     try:
-        intents, variations, enrich_detail = enrich_with_report(query_text, slots)
+        intents, variations, enrich_detail = enrich_with_report(query_text, slots, templates=future is None)
     except Exception as exc:  # noqa: BLE001
         run.degraded.append(f"enrich:{type(exc).__name__}")
-        intents, variations, enrich_detail = enrich_rules(query_text, slots)
+        intents, variations, enrich_detail = enrich_rules(query_text, slots, templates=future is None)
     run.add_llm(enrich_detail)
     if enrich_detail.get("degraded"):
         run.degraded.append("enrich:llm_failed")
@@ -286,7 +287,9 @@ def _cold(
     yield run.event(
         S.enrich,
         t,
-        f"{len(intents)} intent(s), {len(variations)} variations kept "
+        f"{len(intents)} intent(s), variations in the background"
+        if future is not None
+        else f"{len(intents)} intent(s), {len(variations)} variations kept "
         f"({len(enrich_detail.get('dropped_variations', []))} dropped)",
         enrich_detail,
     )
@@ -335,7 +338,9 @@ def _cold(
     yield run.event(
         S.extract,
         t,
-        f"{len(actions)} actions, {proposed} steps proposed ({info.get('source')})",
+        "No action: the article does not address this complaint"
+        if info.get("no_match")
+        else f"{len(actions)} actions, {proposed} steps proposed ({info.get('source')})",
         {"topics": topics, "actions": [a.model_dump(mode="json") for a in actions], **info},
     )
 
@@ -343,7 +348,7 @@ def _cold(
     t = time.perf_counter()
     try:
         grounded, ground_report = ground_with_report(actions, sentences)
-        if not grounded and not rules_only and sentences:
+        if not grounded and not rules_only and sentences and not info.get("no_match"):
             # The LLM's steps did not survive: fall back to the article's own instructions.
             run.degraded.append("ground:llm_steps_dropped")
             actions, topics = extract_rules(intents, sentences, sections)
@@ -418,16 +423,24 @@ def _cold(
         if wait_variations:
             wait([future], timeout=settings.variations_budget_s)  # errors surface in finish_variations
         if future.done():
-            variations, _, variations_info = finish_variations(query_text, slots, future)
+            variations, variations_dropped, variations_info = finish_variations(query_text, slots, future)
+            if sink is not None:
+                sink["variations_dropped"], sink["variations_info"] = variations_dropped, variations_info
             run.add_llm(variations_info, answer_model=False)
     # Every valid answer is cached, a degraded one too: it is grounded and already score-capped, and the
     # scorer's repeat of a query must be fast and identical (A3, deterministic repeats). Measured: not
     # caching degraded answers cost 2/20 repeat hits and one changed plan on the free tier.
+    degraded = rules_only and _llm_configured()
     if contexts:
 
         def entry(texts: list[str]) -> CacheEntry:
             return CacheEntry(
-                key=key, siis_hash=siis_hash, slots=slots, plan={"contexts": contexts}, query_texts=texts
+                key=key,
+                siis_hash=siis_hash,
+                slots=slots,
+                # A rules-only answer while a model is configured is marked, so it can be retried later.
+                plan={"contexts": contexts, **({"degraded": True} if degraded else {})},
+                query_texts=texts,
             )
 
         try:
@@ -513,6 +526,11 @@ def _run_stream(
             yield from _serve_hit(run, hit, detail, t)
             return
         yield run.event(S.cache, t, "Cache miss (no exact key, no semantic match)", detail)
+        if not (slots.component or slots.symptom or recognisable(norm_query, siis_clean)):
+            # Nothing in the complaint can be read, so any plan would be a guess: no_match, no LLM call.
+            run.degraded.append("query:unrecognisable")
+            yield run.done([], fallback=FALLBACK_NO_MATCH)
+            return
         yield from _cold(
             run,
             query_text,
@@ -586,9 +604,17 @@ def _no_article(
 
 def _lookup(norm_query: str, slots: Slots, siis_hash: str | None):
     try:
-        return cache.lookup(norm_query, slots, siis_hash)
+        hit = cache.lookup(norm_query, slots, siis_hash)
     except Exception:  # noqa: BLE001 - a broken cache means a cold run, not an error
         return None
+    if hit is not None and (hit.plan or {}).get("degraded") and _llm_configured():
+        # A rules-only answer (every model was busy) repeats identically for a while, then the next
+        # ask gets a cold run and a model's answer replaces it. Without this one busy minute on the
+        # free tier would pin the weaker plan to that question for good.
+        entry = store.entries().get(hit.key)
+        if entry is not None and time.time() - entry.created_at > settings.degraded_cache_ttl_s:
+            return None
+    return hit
 
 
 def run(query: str, siis: dict | str | None) -> dict:

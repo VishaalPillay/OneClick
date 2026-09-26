@@ -11,11 +11,12 @@ Two extractors with one output shape:
          (no keys), so every SIIS request still gets a non-empty, honest answer.
 """
 
+import copy
 import re
 
 from app.config import settings
 from app.models import DraftAction, DraftStep, Intent, SiisSentence
-from app.pipeline.text import word_block
+from app.pipeline.text import content_terms, word_block
 
 # ---- rules-only extractor ---------------------------------------------------------------------------
 _IMPERATIVE_VERBS = word_block(
@@ -34,7 +35,8 @@ _LEAD_IN = re.compile(
     re.IGNORECASE,
 )
 _CONDITION = re.compile(
-    r"^(?:if|when|to|once|after|before|while)\b[^,]{3,120},\s*(?P<rest>.+)$", re.IGNORECASE
+    r"^(?:if|when|to|once|after|before|while|on|for|in|from|with)\b[^,]{3,120},\s*(?P<rest>.+)$",
+    re.IGNORECASE,
 )
 _HEADING_NUMBER = re.compile(r"^\s*(?:step\s*\d+\s*[:.)-]|\d+\s*[.):-])\s*", re.IGNORECASE)
 _SETTINGS_ENTRY = re.compile(
@@ -43,6 +45,12 @@ _SETTINGS_ENTRY = re.compile(
 _TAP_TARGET = re.compile(
     r"\b(?i:tap|touch)\s+(?i:on\s+)?(?i:the\s+)?(?P<target>[A-Z0-9][\w'’\-]*(?:\s+(?:[A-Za-z0-9][\w'’\-]*))*?)"
     r"(?=\s*(?:,|\.|;|$|\band then\b|\bthen\b|\bto\b|\bif\b|\bfrom\b|\bin\b|\bunder\b|\bon\b|\bor\b))"
+)
+# "tap the switch next to Touch sensitivity": the setting, not the switch, is the path's last part.
+_SWITCH_TARGET = re.compile(
+    r"\b(?i:switch(?:es)?|toggles?|sliders?)\s+(?i:next to|beside|for)\s+(?:the\s+)?"
+    r"(?P<target>[A-Z0-9\"“][\w'’\-]*(?:\s+(?:[A-Za-z0-9][\w'’\-]*))*?)"
+    r"(?=[\"”]?\s*(?:,|\.|;|$|\band then\b|\bthen\b|\bto\b|\bif\b|\bin\b|\bor\b))"
 )
 # Last taps that press a button rather than open a screen: not part of the screen path.
 _BUTTON_WORDS = re.compile(
@@ -58,8 +66,20 @@ _RESET = re.compile(r"\bfactory (?:data )?reset\b|\breset\b", re.IGNORECASE)
 _VISIT = re.compile(r"\bservice cent|\bcontact\b|\bvisit\b|samsung support", re.IGNORECASE)
 
 
+# "For devices with a Power button: Press and hold..." / "Wireless transfer: On the new device, tap...":
+# a short label before the instruction. The step keeps it; it says which case the step is for.
+_LABEL = re.compile(r"^(?!note\b)[^:.]{2,60}:\s+(?P<rest>.+)$", re.IGNORECASE)
+
+
 def instruction(text: str) -> str | None:
     """The sentence as a step when it instructs the reader, else None ("Note: data is lost." is not)."""
+    label = _LABEL.match(text.strip())
+    if label and _instruction(label.group("rest")):
+        return text.strip()
+    return _instruction(text)
+
+
+def _instruction(text: str) -> str | None:
     body = _LEAD_IN.sub("", text.strip())
     first = re.match(r"[A-Za-z']+", body)
     if first and first.group(0).lower() in _IMPERATIVE_VERBS:
@@ -102,8 +122,10 @@ def screen_path(steps: list[str]) -> str | None:
     if not entry:
         return None
     targets = []
-    for match in _TAP_TARGET.finditer(joined[entry.end() :]):
-        target = match.group("target").strip(" '’")
+    rest = joined[entry.end() :]
+    matches = sorted([*_TAP_TARGET.finditer(rest), *_SWITCH_TARGET.finditer(rest)], key=lambda m: m.start())
+    for match in matches:
+        target = match.group("target").strip(" '’\"“”")
         if target and target.lower() != "settings" and target not in targets:
             targets.append(target)
     while targets and _BUTTON_WORDS.match(targets[-1]):
@@ -155,6 +177,9 @@ def extract_rules(
     relevant), the whole article is used: its instructions are still the only grounded answer.
     """
     table = sections or _sections_from_sentences(sentences, len(intents))
+    best = max((max(s.get("relevance") or [0.0]) for s in table), default=0.0)
+    if sections and best < settings.rules_min_relevance:
+        return [], [_topic(i) for i in intents]  # the article is about something else
     relevant = [s for s in table if s.get("relevant")]
     actions = _rules_actions(intents, sentences, relevant) if relevant else []
     if not actions:
@@ -382,6 +407,41 @@ SELECT_SCHEMA = {
 }
 
 
+# Short action keys on the wire. They repeat on every action, and were ~40% of an answer's characters:
+# on the free tier each output token costs ~10 ms, and the touch-lag answer went from 504 to ~400
+# tokens (8B: 5.5 s -> 4.4 s). The rest of the engine reads the long names (_long_keys).
+_WIRE_KEYS = {"ids": "src_ids", "desc": "description", "path": "screen_path", "verb": "intent_verb"}
+
+
+def select_schema(sentence_ids: list[str]) -> dict:
+    """The select-mode schema for one article: SELECT_SCHEMA with the short wire keys, and src_ids
+    limited to this article's own ids. Free to cite any string, both Ministral models sometimes filled
+    src_ids with punctuation (":", ",") on a 100-sentence article; with the ids as an enum, constrained
+    decoding cannot produce an id the article does not have."""
+    schema = copy.deepcopy(SELECT_SCHEMA)
+    action = schema["properties"]["goals"]["items"]["properties"]["actions"]["items"]
+    short = {long: wire for wire, long in _WIRE_KEYS.items()}
+    action["properties"] = {short.get(k, k): v for k, v in action["properties"].items()}
+    action["required"] = [short.get(k, k) for k in action["required"]]
+    action["properties"]["ids"]["items"] = {"type": "string", "enum": list(sentence_ids)}
+    schema["properties"]["goals"]["items"]["properties"]["actions"]["maxItems"] = settings.extract_max_actions
+    return schema
+
+
+def _long_keys(answer: dict) -> dict:
+    """A select-mode answer with the wire keys renamed to the names the engine uses."""
+    goals = []
+    for goal in answer.get("goals") or []:
+        if isinstance(goal, dict):
+            actions = [
+                {_WIRE_KEYS.get(k, k): v for k, v in action.items()}
+                for action in goal.get("actions") or []
+                if isinstance(action, dict)
+            ]
+            goals.append({**goal, "actions": actions})
+    return {**answer, "goals": goals}
+
+
 def usable_selection(answer: dict, known: set[str]) -> bool:
     """The router's accept check: at least one action that cites a real sentence."""
     return any(
@@ -389,6 +449,49 @@ def usable_selection(answer: dict, known: set[str]) -> bool:
         for goal in answer.get("goals") or []
         for action in goal.get("actions") or []
     )
+
+
+# A side note is never a step on its own ("Note: ... by following our troubleshooting guide").
+_NOTE = re.compile(r"^\s*(?:note|tip|important)\b", re.IGNORECASE)
+# A sentence that finishes what the one before it started: "Tap Restart again to confirm."
+_CONTINUATION = re.compile(r"\bagain\b|\bto confirm\b|^(?:then|next|afterwards?|after that)\b", re.IGNORECASE)
+
+
+def _with_lead_in(ids: list[str], sentences: list[SiisSentence]) -> list[str]:
+    """The chosen ids, plus the instruction that starts the action when the model chose only the
+    sentence that finishes it. The added sentence is the article's own, in the same section."""
+    if not ids:
+        return ids
+    index = {s.id: n for n, s in enumerate(sentences)}
+    first = sentences[index[ids[0]]]
+    at = index[ids[0]]
+    if at == 0 or not _CONTINUATION.search(first.text):
+        return ids
+    before = sentences[at - 1]
+    if before.section != first.section or before.id in ids or instruction(before.text) is None:
+        return ids
+    return [before.id, *ids]
+
+
+_NAME_VERB = {"enable": "Enable", "disable": "Disable", "set": "Adjust", "check": "Check"}
+
+
+def _consistent_name(
+    name: str | None, steps: list[DraftStep], path: str | None, verb: str | None
+) -> str | None:
+    """The model's action name, unless it names something its own steps and screen never mention.
+
+    Picking ids, a model can label an action after one sentence and cite another: "Remove Damaged
+    Screen Protector" over the Touch sensitivity steps. When the action has a Settings screen, the
+    name then comes from that screen ("Enable Touch sensitivity"); without one it stays, since a
+    physical step ("Force Restart Device" over "Press and hold the Power button") often shares no word.
+    """
+    if not name or not path:
+        return name
+    if content_terms(name) & content_terms(" ".join([path, *(s.text for s in steps)])):
+        return name
+    leaf = path.rsplit(">", 1)[-1].strip()
+    return f"{_NAME_VERB.get(verb or '', 'Open')} {leaf}" if leaf else name
 
 
 def actions_from_selection(
@@ -406,20 +509,27 @@ def actions_from_selection(
         goal_actions = []
         for raw in goal.get("actions") or []:
             ids = [i for i in raw.get("src_ids") or [] if isinstance(i, str) and i in by_id]
+            ids = _with_lead_in(list(dict.fromkeys(ids)), sentences)
             steps: list[DraftStep] = []
             for sid in dict.fromkeys(ids):
                 steps += [DraftStep(text=t, src_ids=[sid]) for t in sentence_steps(by_id[sid].text)]
-            if not steps:  # the model chose only non-instruction sentences: keep them as written
-                steps = [DraftStep(text=by_id[sid].text, src_ids=[sid]) for sid in dict.fromkeys(ids)]
+            if not steps:  # the model chose only non-instruction sentences: keep them, bar side notes
+                steps = [
+                    DraftStep(text=by_id[sid].text, src_ids=[sid])
+                    for sid in dict.fromkeys(ids)
+                    if not _NOTE.match(by_id[sid].text)
+                ]
             if not steps:
                 continue
             verb = raw.get("intent_verb") if raw.get("intent_verb") in VERBS else "none"
+            path = " ".join(str(raw.get("screen_path") or "").split()) or None
+            name = " ".join(str(raw.get("name") or "").split()) or None
             goal_actions.append(
                 DraftAction(
                     steps=steps,
-                    screen_path=" ".join(str(raw.get("screen_path") or "").split()) or None,
+                    screen_path=path,
                     intent_verb=None if verb == "none" else verb,
-                    name=" ".join(str(raw.get("name") or "").split()) or None,
+                    name=_consistent_name(name, steps, path, None if verb == "none" else verb),
                     description=" ".join(str(raw.get("description") or "").split()) or None,
                     intent_index=len(intents),
                 )
@@ -438,20 +548,34 @@ def actions_from_selection(
 def extract_select_llm(
     query: str, sentences: list[SiisSentence], sections: list[dict] | None
 ) -> tuple[list[DraftAction], list[str], dict]:
-    from app.llm.router import complete_json
+    from app.llm.router import LLMError, complete_json
 
     known = {s.id for s in sentences}
     info: dict = {}
-    variables = {"query": query, "sentences": format_sentences(sentences, sections)}
-    answer = complete_json(
-        "extract",
-        variables,
-        SELECT_SCHEMA,
-        stage="extract",
-        info=info,
-        accept=lambda a: usable_selection(a, known),
-    )
-    actions, topics, intents = actions_from_selection(answer, sentences)
+    variables = {
+        "query": query,
+        "sentences": format_sentences(sentences, sections),
+        "max_actions": settings.extract_max_actions,
+    }
+    empty: list[bool] = []  # per turned-down answer: True when it selected nothing at all
+
+    def accept(answer: dict) -> bool:
+        answer = _long_keys(answer)
+        if usable_selection(answer, known):
+            return True
+        empty.append(not any(goal.get("actions") for goal in answer.get("goals") or []))
+        return False
+
+    try:
+        schema = select_schema([s.id for s in sentences])
+        answer = complete_json("extract", variables, schema, stage="extract", info=info, accept=accept)
+    except LLMError as exc:
+        if len(empty) >= settings.extract_empty_votes and all(empty):
+            # Every model that answered says the article does not address the complaint: that is the
+            # answer (no_match), not a failure to fall back from.
+            return [], [], {"source": "llm", "mode": "select", "no_match": True, "attempts": exc.attempts}
+        raise
+    actions, topics, intents = actions_from_selection(_long_keys(answer), sentences)
     if not actions:
         raise ValueError("the extraction answer has no usable action")
     keys = ("model", "tokens_in", "tokens_out", "cost_usd", "attempts", "prompt")
