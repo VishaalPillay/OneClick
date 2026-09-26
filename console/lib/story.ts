@@ -27,6 +27,30 @@ export interface PromptFile {
   body: string | null;
 }
 
+/**
+ * docs/metrics.md, as numbers. Percentages are 0-100 as the report prints them. The cache
+ * threshold is the engine's own `cache_sim_threshold` from api/app/config.py.
+ */
+export interface Metrics {
+  commit: string | null;
+  date: string | null;
+  schemaValid: number | null;
+  urlLeaks: number | null;
+  stepAccuracy: number | null;
+  judgedPlans: number | null;
+  relevance: number | null;
+  resolver: {
+    n: number | null;
+    top1: number | null;
+    bm25Top1: number | null;
+    wrongLink: number | null;
+    llmTop1: number | null; // the whole catalog handed to an LLM, per step
+    llmP95: number | null;
+  };
+  latency: { exactP95: number | null; paraphraseP95: number | null; coldP50: number | null; coldP95: number | null };
+  cache: { threshold: number; paraphraseHit: number | null; falseHit: number | null; nearMisses: number | null };
+}
+
 export interface Proof {
   sets: { paraphrases: number; nearMiss: number; unseen: number; adversarial: number };
   gold: {
@@ -40,10 +64,8 @@ export interface Proof {
   catalog: { entries: number; verifiable: number };
   /** Mean token overlap with the kit query, from `python eval/sets/validate_sets.py`. */
   overlap: { paraphrase: number; nearMiss: number };
-  /** Resolver against plain BM25 on the same labelled steps. See story.server.ts for sources. */
-  resolver: { n: number; top1: number; bm25Top1: number; wrongLink: number };
-  /** The semantic cache, measured by the mapping lane (docs/MAPPING_CACHE.md). */
-  cache: { repeatHit: number; repeatMs: number; paraphraseHit: number; paraphraseMs: number; falseHits: number };
+  /** The measured numbers, read from docs/metrics.md at build time; null = not measured there. */
+  metrics: Metrics;
   nearMisses: { query: string; differsIn: string; slots: Record<string, string | null> }[];
 }
 
@@ -64,8 +86,19 @@ export interface MultiIntent {
   deduped: { action: string; keptIn: string; removedFrom: string[] }[];
 }
 
+/** The engine's model settings, read from api/app/config.py at build time. */
+export interface LlmConfig {
+  model: string; // call B (extract), raced against fastModel
+  fastModel: string;
+  variationsModel: string; // the background call
+  temperature: number; // Mistral models
+  fallback: string; // last resort for every call
+  fallbackTemperature: number;
+}
+
 export interface StoryInputs {
-  prompts: { enrich: PromptFile; extract: PromptFile };
+  prompts: { variations: PromptFile; extract: PromptFile };
+  llm: LlmConfig;
   proof: Proof;
   catalog: CatalogEntry[];
   multiIntent: MultiIntent;
@@ -143,7 +176,8 @@ export interface StoryData {
     semantic: number;
   };
   semanticHit: { query: string; matched: string; similarity: number; threshold: number };
-  prompts: { enrich: PromptFile; extract: PromptFile };
+  prompts: { variations: PromptFile; extract: PromptFile };
+  llm: LlmConfig;
   proof: Proof;
   compile: {
     body: ResponseBody;
@@ -181,7 +215,7 @@ const toAction = (a: RawAction): StoryAction => ({
   steps: a.steps.map((s) => ({ text: s.text, src: s.src_ids, score: s.grounding_score })),
 });
 
-export function buildStory({ prompts, proof, catalog, multiIntent, presets }: StoryInputs): StoryData {
+export function buildStory({ prompts, llm, proof, catalog, multiIntent, presets }: StoryInputs): StoryData {
   const cache = detail<{
     slots: Record<string, string | null>;
     threshold: number;
@@ -334,6 +368,7 @@ export function buildStory({ prompts, proof, catalog, multiIntent, presets }: St
       threshold: hits.semantic.event.detail.threshold,
     },
     prompts,
+    llm,
     proof,
     compile: {
       body: { contexts: plan.contexts, meta: plan.meta as unknown as Record<string, unknown> },

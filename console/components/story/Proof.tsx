@@ -5,15 +5,21 @@ import { gsap, useGSAP } from "@/lib/gsap";
 import type { StoryData } from "@/lib/story";
 
 /**
- * Measured, not claimed. Only numbers the repo can reproduce today: the eval sets' design, the
- * BM25 baseline the resolver must beat, the catalog's own shape and the answer key's progress.
- * Everything that needs the live engine is listed as pending, never estimated.
+ * Measured, not claimed. The engine's numbers are read from docs/metrics.md (eval/report.py) when
+ * the site is built, so this section can only say what the committed report says; the rest is the
+ * eval sets' design, the catalog's own shape and the answer key. Anything the report has not
+ * measured shows as pending, never estimated.
  */
 
 const R = 42;
 const RING = 2 * Math.PI * R;
 
-function Ring({ value, label, sub, tone }: { value: number; label: string; sub: string; tone: string }) {
+// The report prints one decimal; keep it, but drop a trailing ".0".
+const pctText = (x: number | null) => (x === null ? "pending" : `${Number(x.toFixed(1))}%`);
+const msText = (x: number | null) => (x === null ? "pending" : `${Math.round(x).toLocaleString("en-US")} ms`);
+
+function Ring({ value, label, sub, tone }: { value: number | null; label: string; sub: string; tone: string }) {
+  const v = (value ?? 0) / 100;
   return (
     <div className="pf-ring">
       <svg viewBox="0 0 100 100" aria-hidden>
@@ -24,12 +30,12 @@ function Ring({ value, label, sub, tone }: { value: number; label: string; sub: 
           r={R}
           className={`pf-ring-fill ${tone}`}
           strokeDasharray={RING}
-          strokeDashoffset={RING * (1 - value)}
-          data-offset={RING * (1 - value)}
+          strokeDashoffset={RING * (1 - v)}
+          data-offset={RING * (1 - v)}
           transform="rotate(-90 50 50)"
         />
       </svg>
-      <b>{Math.round(value * 100)}%</b>
+      <b>{pctText(value)}</b>
       <span>{label}</span>
       <small>{sub}</small>
     </div>
@@ -39,8 +45,21 @@ function Ring({ value, label, sub, tone }: { value: number; label: string; sub: 
 export function Proof({ data }: { data: StoryData }) {
   const root = useRef<HTMLElement>(null);
   const { proof } = data;
-  const { sets, gold, catalog, overlap, resolver, cache } = proof;
-  const pct = (x: number) => `${Math.round(x * 100)}%`;
+  const { sets, gold, catalog, overlap, metrics } = proof;
+  const { resolver, cache, latency } = metrics;
+  const source = metrics.commit ? `docs/metrics.md at ${metrics.commit}` : "docs/metrics.md";
+  const e2e = [
+    [
+      "Cold answer, p50 / p95",
+      latency.coldP50 === null || latency.coldP95 === null
+        ? "pending"
+        : `${(latency.coldP50 / 1000).toFixed(1)} / ${(latency.coldP95 / 1000).toFixed(1)} s`,
+    ],
+    ["Step accuracy, judged", metrics.stepAccuracy === null ? "pending" : `${metrics.stepAccuracy.toFixed(2)} / 3`],
+    ["Schema-valid responses", pctText(metrics.schemaValid)],
+    ["URLs leaked", metrics.urlLeaks === null ? "pending" : String(metrics.urlLeaks)],
+  ] as const;
+  const measured = e2e.some(([, v]) => v !== "pending");
   const owners = Object.entries(gold.owners)
     .map(([o, n]) => `${n} by ${o}`)
     .join(", ");
@@ -105,8 +124,9 @@ export function Proof({ data }: { data: StoryData }) {
           <p className="st-eyebrow">09 · Proof</p>
           <h2 className="st-h2">Measured, not claimed.</h2>
           <p className="st-lead">
-            What the repo measures today. Each number says who measured it, and anything that needs the whole
-            engine running says pending until it has a real value.
+            Every engine number here is read from the committed evaluation report ({source}
+            {metrics.date ? `, ${metrics.date}` : ""}) when the site is built. Anything it has not measured says
+            pending.
           </p>
         </header>
 
@@ -149,23 +169,17 @@ export function Proof({ data }: { data: StoryData }) {
               <span className="tag tag-blue">Resolver</span>
             </div>
             <div className="pf-rings">
-              <Ring
-                value={resolver.top1 / resolver.n}
-                label="Screen Graph resolver"
-                sub={`${resolver.top1} of ${resolver.n}`}
-                tone="lime"
-              />
-              <Ring
-                value={resolver.bm25Top1 / resolver.n}
-                label="plain keyword search"
-                sub={`${resolver.bm25Top1} of ${resolver.n}`}
-                tone="blue"
-              />
+              <Ring value={resolver.top1} label="Screen Graph resolver" sub="precision@1" tone="lime" />
+              <Ring value={resolver.bm25Top1} label="plain keyword search" sub="precision@1" tone="blue" />
             </div>
             <p className="pf-note">
-              Precision@1 on the same {resolver.n} labelled steps. A wrong link was attached {resolver.wrongLink} time
-              in {resolver.n}. Measured by the mapping lane on labels it wrote; the check on the eval lane&apos;s
-              independent labels is pending.
+              On the {resolver.n ?? gold.catalog} hand-labelled steps that have a real catalog answer. A wrong or
+              unsafe link on {pctText(resolver.wrongLink)} of all {gold.labelled} labelled steps. Both lanes labelled
+              them; the mapping lane tuned on its own half.
+              {resolver.llmTop1 !== null &&
+                ` Handing the whole catalog to an LLM instead: ${pctText(resolver.llmTop1)}, at ${msText(
+                  resolver.llmP95,
+                )} a step (p95).`}
             </p>
           </article>
 
@@ -176,22 +190,25 @@ export function Proof({ data }: { data: StoryData }) {
             </div>
             <ul className="pf-stats">
               <li>
-                <b>{pct(cache.repeatHit)}</b>
-                <span>same words answered from cache</span>
-                <small>{cache.repeatMs} ms</small>
-              </li>
-              <li>
-                <b>{pct(cache.paraphraseHit)}</b>
+                <b>{pctText(cache.paraphraseHit)}</b>
                 <span>reworded questions recognised</span>
-                <small>~{cache.paraphraseMs} ms</small>
+                <small>p95 {msText(latency.paraphraseP95)}</small>
               </li>
               <li>
-                <b>{pct(cache.falseHits)}</b>
-                <span>wrong plans reused</span>
-                <small>false hits</small>
+                <b>{pctText(cache.falseHit)}</b>
+                <span>near misses served a wrong plan</span>
+                <small>of {cache.nearMisses ?? sets.nearMiss}</small>
+              </li>
+              <li>
+                <b>{cache.threshold.toFixed(2)}</b>
+                <span>similarity a hit needs, plus matching slots and article</span>
+                <small>threshold</small>
               </li>
             </ul>
-            <p className="pf-note">Measured by the mapping lane on its held-out paraphrases.</p>
+            <p className="pf-note">
+              Our {sets.paraphrases} held-out paraphrases and {sets.nearMiss} near misses, over HTTP. A repeat
+              answers in {msText(latency.exactP95)} at p95.
+            </p>
           </article>
 
           <article className="pf-card pf-span-4">
@@ -271,29 +288,24 @@ export function Proof({ data }: { data: StoryData }) {
             <p className="pf-note">The answer key for deeplink precision: {owners}.</p>
           </article>
 
-          <article className="pf-card pf-span-8 pf-card-pending">
+          <article className={`pf-card pf-span-8${measured ? "" : " pf-card-pending"}`}>
             <div className="pf-top">
-              <h3>Waiting for the live engine</h3>
-              <span className="tag tag-ghost">Pending</span>
+              <h3>End to end, over HTTP</h3>
+              <span className={`tag ${measured ? "tag-lime" : "tag-ghost"}`}>
+                {measured ? "Live engine" : "Pending"}
+              </span>
             </div>
             <ul className="pf-pending">
-              <li>
-                <span>Resolver on independent labels</span>
-                <b>pending</b>
-              </li>
-              <li>
-                <span>End-to-end latency p50 / p95</span>
-                <b>pending</b>
-              </li>
-              <li>
-                <span>Step accuracy, judged</span>
-                <b>pending</b>
-              </li>
-              <li>
-                <span>Cache on our 200 held-out paraphrases</span>
-                <b>pending</b>
-              </li>
+              {e2e.map(([label, value]) => (
+                <li key={label}>
+                  <span>{label}</span>
+                  <b className={value === "pending" ? undefined : "is-measured"}>{value}</b>
+                </li>
+              ))}
             </ul>
+            {metrics.judgedPlans !== null && (
+              <p className="pf-note">Step accuracy: an independent model judged {metrics.judgedPlans} plans, 0 to 3.</p>
+            )}
           </article>
         </div>
       </div>
